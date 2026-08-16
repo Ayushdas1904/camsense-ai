@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-base text-content font-sans antialiased;
+  }
+
+  /* Thin, unobtrusive scrollbars that suit a dark data-dense UI. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-border-strong rounded;
+  }
+}
+
+@layer components {
+  /* Shared panel surface used by Card and layout regions. */
+  .cs-panel {
+    @apply bg-panel border border-border rounded-lg shadow-panel;
+  }
+}

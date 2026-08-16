@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+**/node_modules/
+.venv/
+**/.venv/
+
+# Env files (never commit real secrets)
+.env
+**/.env
+
+# Build output
+dist/
+**/dist/
+
+# Python
+__pycache__/
+**/__pycache__/
+*.pyc
+
+# Model weights (large binaries — added per review, keep out of git)
+models/*.pt
+models/*.onnx
+models/*.weights
+
+# Logs & OS
+*.log
+.DS_Store
