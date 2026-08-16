@@ -1,9 +1,8 @@
 """Detector interface.
 
-Every detection module (human, weapon, face, ...) implements this interface.
-The rest of the service depends only on `Detector`, never on a concrete model,
-so real YOLO/face models can replace the mock implementations without touching
-callers. This is the seam that makes DEMO → REAL a config change, not a rewrite.
+Every detection module (human, weapon, ...) implements this. The pipeline
+depends only on `Detector`, never on a concrete model, so models can be
+swapped or upgraded without touching callers.
 """
 from abc import ABC, abstractmethod
 
@@ -11,18 +10,16 @@ from app.models.schemas import Detection
 
 
 class Detector(ABC):
-    #: Module family reported on each detection ("human", "weapon", "face").
+    #: Module family reported on each detection ("human", "weapon").
     type: str = "other"
+    #: Human-readable label for the status panel.
+    label: str = "Detector"
 
     @abstractmethod
     def detect(self, frame) -> list[Detection]:
-        """Run detection on a single frame and return structured detections.
-
-        `frame` is an image/array in real mode. In the foundation's mock
-        detectors it is unused, but the signature matches the real contract.
-        """
+        """Run detection on a single BGR frame and return structured detections."""
         raise NotImplementedError
 
-    @property
-    def name(self) -> str:
-        return self.__class__.__name__
+    def status(self) -> str:
+        """Report readiness: 'active' | 'unavailable' | 'demo'."""
+        return "active"

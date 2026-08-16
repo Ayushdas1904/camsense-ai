@@ -7,21 +7,30 @@ import { asyncHandler } from '../utils/asyncHandler.js';
  * Protects routes with JWT auth. Reads the bearer token, verifies it, loads the
  * user, and attaches it to req.user. Downstream handlers can then trust req.user.
  */
+async function authenticate(token, req) {
+  if (!token) throw ApiError.unauthorized('Authentication required');
+  const payload = verifyAuthToken(token);
+  const user = await User.findById(payload.sub);
+  if (!user) throw ApiError.unauthorized('Account no longer exists');
+  req.user = user;
+}
+
 export const requireAuth = asyncHandler(async (req, _res, next) => {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  await authenticate(token, req);
+  next();
+});
 
-  if (!token) {
-    throw ApiError.unauthorized('Authentication required');
-  }
-
-  const payload = verifyAuthToken(token);
-  const user = await User.findById(payload.sub);
-  if (!user) {
-    throw ApiError.unauthorized('Account no longer exists');
-  }
-
-  req.user = user;
+/**
+ * Auth variant that also accepts a `?token=` query param. Needed for the MJPEG
+ * stream served into an <img> tag, which cannot send an Authorization header.
+ * Used only on the stream route.
+ */
+export const requireAuthQueryOrHeader = asyncHandler(async (req, _res, next) => {
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : req.query.token || null;
+  await authenticate(token, req);
   next();
 });
 

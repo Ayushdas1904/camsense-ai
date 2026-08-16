@@ -5,3 +5,7 @@ venv/
 .env
 *.log
 .DS_Store
+
+# Sample media (large binaries — download per README)
+samples/*.avi
+samples/*.mp4

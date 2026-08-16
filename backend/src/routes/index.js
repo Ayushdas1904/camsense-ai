@@ -1,6 +1,11 @@
 import { Router } from 'express';
 import healthRoutes from './healthRoutes.js';
 import authRoutes from './authRoutes.js';
+import cameraRoutes from './cameraRoutes.js';
+import detectionRoutes from './detectionRoutes.js';
+import alertRoutes from './alertRoutes.js';
+import dashboardRoutes from './dashboardRoutes.js';
+import aiRoutes from './aiRoutes.js';
 
 /**
  * Central API router. Every feature area mounts here under /api.
@@ -11,21 +16,23 @@ import authRoutes from './authRoutes.js';
  */
 const router = Router();
 
-// ── Implemented in the foundation ──────────────────────────────
+// ── Foundation ─────────────────────────────────────────────────
 router.use('/health', healthRoutes);
 router.use('/auth', authRoutes);
 
-// ── Planned API surface (uncomment/implement per review) ───────
-// router.use('/users', userRoutes);            // Review 1
-// router.use('/cameras', cameraRoutes);        // Review 1
-// router.use('/detections', detectionRoutes);  // Review 1
-// router.use('/alerts', alertRoutes);          // Review 1
+// ── Review 1: "Teach CCTV to SEE" ──────────────────────────────
+router.use('/cameras', cameraRoutes);
+router.use('/detections', detectionRoutes);
+router.use('/alerts', alertRoutes);
+router.use('/dashboard', dashboardRoutes);
+router.use('/ai', aiRoutes); // backend <-> AI service (ingest + status)
+
+// ── Planned API surface (later reviews) ────────────────────────
 // router.use('/people', peopleRoutes);         // Review 2
 // router.use('/attendance', attendanceRoutes); // Review 2
 // router.use('/occupancy', occupancyRoutes);   // Review 3
 // router.use('/energy', energyRoutes);         // Review 3
 // router.use('/analytics', analyticsRoutes);   // Review 3
 // router.use('/notifications', notificationRoutes);
-// router.use('/ai', aiRoutes);                 // backend <-> AI service proxy
 
 export default router;

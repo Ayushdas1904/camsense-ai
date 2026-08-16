@@ -36,6 +36,22 @@ export const env = {
     email: process.env.SEED_ADMIN_EMAIL || 'admin@camsense.ai',
     password: process.env.SEED_ADMIN_PASSWORD || 'ChangeMe123!',
   },
+
+  // Shared secret for service-to-service AI → backend event ingestion.
+  aiIngestSecret: process.env.AI_INGEST_SECRET || 'local_dev_ingest_secret_change_me',
+
+  // Where detection snapshots are written and served from.
+  snapshotDir: process.env.SNAPSHOT_DIR || 'uploads/snapshots',
+
+  // Detection/alert throttling (seconds). Prevents flooding the DB with the
+  // same object across consecutive frames. See eventService.
+  detection: {
+    // A stored detection event of the same (camera, type) inside this window
+    // is treated as the same ongoing event.
+    eventCooldownSec: Number(process.env.DETECTION_EVENT_COOLDOWN) || 5,
+    weaponAlertCooldownSec: Number(process.env.WEAPON_ALERT_COOLDOWN) || 10,
+    personAlertCooldownSec: Number(process.env.PERSON_ALERT_COOLDOWN) || 60,
+  },
 };
 
 export const isProduction = env.nodeEnv === 'production';

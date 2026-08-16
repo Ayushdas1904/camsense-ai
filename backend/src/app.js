@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
+import path from 'node:path';
 
 import { env, isProduction } from './config/env.js';
 import apiRouter from './routes/index.js';
@@ -16,8 +17,13 @@ import { errorHandler } from './middleware/errorHandler.js';
 export function createApp() {
   const app = express();
 
-  // Security headers.
-  app.use(helmet());
+  // Security headers. crossOriginResourcePolicy is relaxed so the frontend
+  // (different origin in dev) can load snapshot images from /uploads.
+  app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+
+  // Serve detection snapshots. Stored on disk, referenced by URL from alerts
+  // (never embedded in the DB). Swappable for S3/Cloudinary later.
+  app.use('/uploads', express.static(path.resolve(env.snapshotDir, '..')));
 
   // CORS — only the configured frontend origins may call the API.
   app.use(

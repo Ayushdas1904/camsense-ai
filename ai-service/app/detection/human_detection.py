@@ -1,31 +1,45 @@
-"""Human detection module.
+"""Human/person detection using YOLO (COCO 'person' class).
 
-Foundation ships a MOCK detector that returns clearly-labelled DEMO data.
-Review 1 replaces the body of `detect()` with a YOLOv8/YOLOv11 person detector
-while keeping this exact class interface, so nothing downstream changes.
+This is a REAL detector: it runs the shared YOLO model and returns actual
+person bounding boxes with confidences.
 """
-import random
-
+from app.config import get_settings
 from app.detection.base import Detector
-from app.models.schemas import BoundingBox, Detection
+from app.detection.yolo_model import YoloModel
+from app.models.schemas import Detection
 
 
 class HumanDetector(Detector):
     type = "human"
+    label = "Human Detection"
 
-    def detect(self, frame=None) -> list[Detection]:
-        # DEMO: synthesize 0–2 person boxes. Not a real inference result.
-        count = random.randint(0, 2)
+    def detect(self, frame) -> list[Detection]:
+        model = YoloModel.instance()
+        if not model.available:
+            return []
+
+        conf = get_settings().person_confidence
+        result = model.predict(frame, conf=conf)
+        if result is None or result.boxes is None:
+            return []
+
         detections: list[Detection] = []
-        for _ in range(count):
-            x, y = random.randint(0, 400), random.randint(0, 200)
+        for box in result.boxes:
+            cls_id = int(box.cls[0])
+            name = model.names.get(cls_id, str(cls_id))
+            if name != "person":
+                continue
+            x1, y1, x2, y2 = (int(v) for v in box.xyxy[0].tolist())
             detections.append(
                 Detection(
                     type=self.type,
                     label="person",
-                    confidence=round(random.uniform(0.75, 0.98), 2),
-                    bbox=BoundingBox(x=x, y=y, width=random.randint(80, 160),
-                                     height=random.randint(200, 360)),
+                    confidence=round(float(box.conf[0]), 2),
+                    bbox=[x1, y1, x2 - x1, y2 - y1],
+                    source="real",
                 )
             )
         return detections
+
+    def status(self) -> str:
+        return "active" if YoloModel.instance().available else "unavailable"

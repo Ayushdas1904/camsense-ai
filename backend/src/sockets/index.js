@@ -5,11 +5,18 @@ import { logger } from '../utils/logger.js';
 /**
  * Real-time gateway (Socket.IO).
  *
- * Wired at the foundation level so real-time events can be emitted from
- * anywhere via `getIO().emit(...)` in later reviews (weapon detected,
- * unknown person, attendance marked, camera offline, etc.). No business
- * events are emitted yet — only connection lifecycle logging.
+ * Realizes the EVENT → WEBSOCKET → DASHBOARD leg. The backend emits these
+ * events when significant things happen; the frontend subscribes and updates
+ * live without a page refresh.
  */
+export const SocketEvents = {
+  DETECTION_NEW: 'detection:new',
+  ALERT_NEW: 'alert:new',
+  ALERT_UPDATED: 'alert:updated',
+  CAMERA_STATUS: 'camera:status',
+  DASHBOARD_UPDATE: 'dashboard:update',
+};
+
 let io = null;
 
 export function initSocket(httpServer) {
@@ -26,10 +33,12 @@ export function initSocket(httpServer) {
   return io;
 }
 
-/** Accessor for emitting events elsewhere in the app. */
 export function getIO() {
-  if (!io) {
-    throw new Error('Socket.IO has not been initialised yet');
-  }
+  if (!io) throw new Error('Socket.IO has not been initialised yet');
   return io;
+}
+
+/** Safe emit — no-op if the gateway isn't up yet (e.g. during scripts/tests). */
+export function emit(event, payload) {
+  if (io) io.emit(event, payload);
 }

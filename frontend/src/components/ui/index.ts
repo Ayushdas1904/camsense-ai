@@ -4,5 +4,8 @@ export { Card, CardHeader, CardBody } from './Card';
 export { Badge } from './Badge';
 export { StatusIndicator } from './StatusIndicator';
 export { Input } from './Input';
+export { Select } from './Select';
+export { Modal } from './Modal';
+export { ConfirmDialog } from './ConfirmDialog';
 export { PageHeader } from './PageHeader';
 export { LoadingState, EmptyState, ErrorState } from './States';
