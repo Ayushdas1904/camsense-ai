@@ -25,3 +25,7 @@ models/*.weights
 # Logs & OS
 *.log
 .DS_Store
+
+# TypeScript incremental build info
+*.tsbuildinfo
+**/*.tsbuildinfo
