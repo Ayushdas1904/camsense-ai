@@ -27,4 +27,9 @@ export const SocketEvents = {
   ALERT_UPDATED: 'alert:updated',
   CAMERA_STATUS: 'camera:status',
   DASHBOARD_UPDATE: 'dashboard:update',
+  // Review 2 · face recognition / attendance.
+  PERSON_RECOGNIZED: 'person:recognized',
+  IDENTITY_UNKNOWN: 'identity:unknown',
+  ATTENDANCE_MARKED: 'attendance:marked',
+  RECOGNITION_STATUS: 'recognition:status',
 } as const;

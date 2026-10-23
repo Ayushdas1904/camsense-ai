@@ -4,6 +4,7 @@ import { ApiError } from '../utils/ApiError.js';
 import { Alert } from '../models/Alert.js';
 import { Camera } from '../models/Camera.js';
 import { emit, SocketEvents } from '../sockets/index.js';
+import { toQueryString } from '../services/identityRules.js';
 
 export const alertStatusSchema = z.object({
   status: z.enum(['new', 'acknowledged', 'resolved']),
@@ -22,7 +23,12 @@ async function withCameraNames(alerts) {
 }
 
 export const listAlerts = asyncHandler(async (req, res) => {
-  const { status, severity, limit = 50, page = 1 } = req.query;
+  const { limit = 50, page = 1 } = req.query;
+  // Coerced, not trusted: `?status[$ne]=resolved` would otherwise reach Mongo
+  // as an operator (Express's extended query parser builds an object from it).
+  const status = toQueryString(req.query.status);
+  const severity = toQueryString(req.query.severity);
+
   const filter = {};
   if (status) filter.status = status;
   if (severity) filter.severity = severity;

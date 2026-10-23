@@ -1,5 +1,5 @@
 import axios, { AxiosError } from 'axios';
-import { tokenStorage } from '@/utils/storage';
+import { assetTokenStorage, tokenStorage } from '@/utils/storage';
 import type { ApiErrorBody } from '@/types';
 
 /**
@@ -38,9 +38,11 @@ export interface NormalizedError {
 apiClient.interceptors.response.use(
   (response) => response,
   (error: AxiosError<ApiErrorBody>) => {
-    // Session expired/invalid — clear token so the app redirects to login.
+    // Session expired/invalid — clear both credentials so the app redirects to
+    // login and no stale image token is left behind.
     if (error.response?.status === 401) {
       tokenStorage.clear();
+      assetTokenStorage.clear();
     }
 
     const normalized: NormalizedError = {

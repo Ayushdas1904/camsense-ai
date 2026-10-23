@@ -8,6 +8,7 @@ import { LiveMonitoringPage } from '@/pages/LiveMonitoringPage';
 import { AlertsPage } from '@/pages/AlertsPage';
 import { CamerasPage } from '@/pages/CamerasPage';
 import { PeoplePage } from '@/pages/PeoplePage';
+import { PersonDetailPage } from '@/pages/PersonDetailPage';
 import { AttendancePage } from '@/pages/AttendancePage';
 import { EnergyPage } from '@/pages/EnergyPage';
 import { AnalyticsPage } from '@/pages/AnalyticsPage';
@@ -31,6 +32,9 @@ export function AppRoutes() {
           <Route path="alerts" element={<AlertsPage />} />
           <Route path="cameras" element={<CamerasPage />} />
           <Route path="people" element={<PeoplePage />} />
+          {/* Review 2: person detail. navigation.ts keeps the top-level
+              People entry pointing at the list page. */}
+          <Route path="people/:id" element={<PersonDetailPage />} />
           <Route path="attendance" element={<AttendancePage />} />
           <Route path="energy" element={<EnergyPage />} />
           <Route path="analytics" element={<AnalyticsPage />} />

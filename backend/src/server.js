@@ -18,9 +18,16 @@ async function start() {
     const httpServer = http.createServer(app);
     initSocket(httpServer);
 
-    httpServer.listen(env.port, () => {
-      logger.info(`CamSense backend listening on http://localhost:${env.port}`);
+    httpServer.listen(env.port, env.host, () => {
+      logger.info(`CamSense backend listening on http://${env.host}:${env.port}`);
       logger.info(`Environment: ${env.nodeEnv}`);
+      if (env.host === '0.0.0.0' || env.host === '::') {
+        logger.warn(
+          `HOST=${env.host} — this backend is reachable from other machines. It serves ` +
+            'snapshot and registration-portrait images; make sure the network it is on is ' +
+            'private.'
+        );
+      }
     });
 
     const shutdown = (signal) => {

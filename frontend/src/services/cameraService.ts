@@ -53,7 +53,8 @@ export const cameraService = {
   /**
    * Direct URL for the MJPEG stream, for use as an <img> src. Includes the auth
    * token as a query param because <img> can't send an Authorization header;
-   * the backend's stream route accepts it there (and only there).
+   * the backend accepts a token there only on the routes that must be loadable
+   * by an <img> — this stream and the authenticated /uploads asset mount.
    */
   streamUrl(id: string): string {
     const token = tokenStorage.get() ?? '';
