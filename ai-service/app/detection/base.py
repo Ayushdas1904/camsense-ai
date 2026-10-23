@@ -21,5 +21,12 @@ class Detector(ABC):
         raise NotImplementedError
 
     def status(self) -> str:
-        """Report readiness: 'active' | 'unavailable' | 'demo'."""
+        """Report readiness.
+
+        'active'      running a real model
+        'inactive'    loaded and healthy but not currently doing work
+        'unavailable' model/class not loaded
+        'error'       loaded but a dependency it needs is failing
+        'demo'        clearly-labelled simulated output
+        """
         return "active"

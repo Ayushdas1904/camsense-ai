@@ -9,3 +9,4 @@ export { Modal } from './Modal';
 export { ConfirmDialog } from './ConfirmDialog';
 export { PageHeader } from './PageHeader';
 export { LoadingState, EmptyState, ErrorState } from './States';
+export { ToastProvider, useToast } from './Toast';

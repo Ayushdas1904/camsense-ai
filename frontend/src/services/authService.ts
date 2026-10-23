@@ -17,8 +17,15 @@ export const authService = {
     await apiClient.post('/auth/logout');
   },
 
-  async me(): Promise<User> {
-    const { data } = await apiClient.get<ApiSuccess<{ user: User }>>('/auth/me');
-    return data.data.user;
+  /**
+   * Restores the session. Returns the user plus the narrowed asset token the
+   * `/uploads` image mount requires — the session token is deliberately not
+   * accepted there (see utils/assetUrl.ts).
+   */
+  async me(): Promise<{ user: User; assetToken?: string }> {
+    const { data } = await apiClient.get<ApiSuccess<{ user: User; assetToken?: string }>>(
+      '/auth/me'
+    );
+    return data.data;
   },
 };

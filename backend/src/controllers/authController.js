@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import { signAssetToken } from '../utils/token.js';
 import * as authService from '../services/authService.js';
 
 export const loginSchema = z.object({
@@ -33,7 +34,21 @@ export const logout = asyncHandler(async (_req, res) => {
   res.status(200).json({ success: true, data: { message: 'Logged out' } });
 });
 
-/** Returns the currently authenticated user (requires requireAuth). */
+/**
+ * Returns the currently authenticated user (requires requireAuth), plus a
+ * freshly minted asset token.
+ *
+ * The frontend calls this on every boot to restore the session, so handing the
+ * asset token back here means `/uploads` images work immediately after a
+ * reload without a second round trip — and without putting the session token
+ * itself in an image URL.
+ */
 export const me = asyncHandler(async (req, res) => {
-  res.status(200).json({ success: true, data: { user: req.user.toPublicJSON() } });
+  res.status(200).json({
+    success: true,
+    data: {
+      user: req.user.toPublicJSON(),
+      assetToken: signAssetToken(req.user._id.toString()),
+    },
+  });
 });

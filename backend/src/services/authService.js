@@ -1,6 +1,6 @@
 import { User } from '../models/User.js';
 import { ApiError } from '../utils/ApiError.js';
-import { signAuthToken } from '../utils/token.js';
+import { signAssetToken, signAuthToken } from '../utils/token.js';
 
 /**
  * Auth business logic, kept separate from HTTP concerns.
@@ -35,8 +35,20 @@ export async function loginUser({ email, password }) {
   return issueSession(user);
 }
 
-/** Builds the standard { user, token } session payload. */
+/**
+ * Builds the standard session payload.
+ *
+ * `token` is the API session credential (Authorization header). `assetToken` is
+ * a separate, narrowed credential the frontend puts in `/uploads` image URLs:
+ * an <img> cannot send a header, and a URL-borne credential leaks into browser
+ * history and proxy logs, so it is scoped to image reads and expires sooner.
+ * Neither token is a biometric payload and neither conveys an embedding.
+ */
 function issueSession(user) {
   const token = signAuthToken({ sub: user._id.toString(), role: user.role });
-  return { user: user.toPublicJSON(), token };
+  return {
+    user: user.toPublicJSON(),
+    token,
+    assetToken: signAssetToken(user._id.toString()),
+  };
 }

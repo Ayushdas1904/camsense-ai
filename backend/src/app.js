@@ -6,6 +6,7 @@ import path from 'node:path';
 
 import { env, isProduction } from './config/env.js';
 import apiRouter from './routes/index.js';
+import { requireAssetAccess } from './middleware/auth.js';
 import { notFound } from './middleware/notFound.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
@@ -21,9 +22,30 @@ export function createApp() {
   // (different origin in dev) can load snapshot images from /uploads.
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 
-  // Serve detection snapshots. Stored on disk, referenced by URL from alerts
-  // (never embedded in the DB). Swappable for S3/Cloudinary later.
-  app.use('/uploads', express.static(path.resolve(env.snapshotDir, '..')));
+  // Stored images — detection/weapon snapshots, cropped face snapshots from
+  // unknown-identity events, and enrolled people's registration portraits.
+  //
+  // AUTHENTICATED, not public. These are evidence images and biometric
+  // photographs: an unguarded express.static mount meant that any URL which
+  // had ever appeared in an <img src> kept working forever, for anyone, logged
+  // in or not.
+  //
+  // requireAssetAccess accepts either a session token in the Authorization
+  // header or a NARROWED, asset-scoped token in `?token=` — because an <img>
+  // cannot send a header, and a URL-borne credential ends up in browser
+  // history and any fronting proxy's log. A full session token in the query
+  // string is refused there, so what can leak that way buys image reads only,
+  // for a shorter window, instead of the whole API for the session's lifetime.
+  //
+  // Nothing here is a public asset: unauthenticated callers get 401.
+  app.use(
+    '/uploads',
+    requireAssetAccess,
+    express.static(path.resolve(env.snapshotDir, '..'), {
+      // Don't let a browser or proxy cache a biometric image indefinitely.
+      setHeaders: (res) => res.setHeader('Cache-Control', 'private, max-age=60'),
+    })
+  );
 
   // CORS — only the configured frontend origins may call the API.
   app.use(

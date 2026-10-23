@@ -7,6 +7,20 @@ Each monitored camera runs one background thread that:
   4. keeps the latest annotated JPEG + live stats in memory (for the MJPEG stream)
   5. reports significant detections to the backend
 
+Review 2 additionally runs face detection and face recognition on every Nth
+processed frame (``settings.face_recognition_every_n_frames``). Object
+detection still runs on EVERY processed frame exactly as in Review 1 — identity
+work is additive and deliberately lower-cadence: on a non-recognition frame the
+pipeline is handed an empty face list, so neither YuNet nor the embedder runs.
+The recognition pass does no blocking network I/O on this thread: the identity
+cache refresh and the report POST are both dispatched to background threads.
+Any recognition failure is counted and logged while detection, the MJPEG stream
+and detection reporting carry on.
+
+Consequence worth knowing: grey face boxes and the ``faces`` stat update at the
+recognition cadence, not every frame. Identity overlays from the most recent
+pass are redrawn for a short TTL so labels do not flicker.
+
 The MJPEG endpoint just reads each worker's latest frame — decoupled from event
 generation, so a dropped video viewer never stops detection/alerting.
 """
@@ -20,12 +34,22 @@ import cv2
 
 from app.config import get_settings
 from app.detection.yolo_model import YoloModel
-from app.models.schemas import Detection
+from app.models.schemas import Detection, FaceRecognitionResult
+from app.recognition import face_service
 from app.services.event_reporter import reporter
 from app.services.pipeline import pipeline
 
+# Minimum IoU for two face boxes in consecutive recognition passes to be
+# treated as the same short-lived track.
+_TRACK_IOU = 0.3
+
 
 class _CameraWorker:
+    #: Seconds a transient face track survives without being re-seen.
+    _TRACK_TTL = 3.0
+    #: Seconds an identity overlay keeps being drawn after its recognition pass.
+    _OVERLAY_TTL = 1.0
+
     def __init__(self, camera_id: str, source: str | None, mode: str) -> None:
         self.camera_id = camera_id
         self.mode = mode
@@ -42,6 +66,19 @@ class _CameraWorker:
         self.inference_ms = 0.0
         self.people = 0
         self.weapons = 0
+        # Review 2 stats.
+        self.faces = 0
+        self.known_faces = 0
+        self.unknown_faces = 0
+        self.recognition_errors = 0
+
+        # Recognition cadence + transient face tracks (see _track_for).
+        self._frame_counter = 0
+        self._recognition_pass = 0
+        self._tracks: list[dict] = []
+        self._track_seq = 0
+        self._latest_recognitions: list[FaceRecognitionResult] = []
+        self._recognitions_until = 0.0
 
     @staticmethod
     def _resolve_source(source: str | None, mode: str):
@@ -106,19 +143,111 @@ class _CameraWorker:
             scale = settings.frame_width / float(w)
             frame = cv2.resize(frame, (settings.frame_width, int(h * scale)))
 
+            # ── Review 2: decide whether identity work runs on this frame ──
+            # Object detection runs every processed frame (Review 1 behaviour).
+            # Face detection AND recognition run on every Nth processed frame:
+            # on other frames the pipeline is handed an EMPTY face list, so the
+            # face detector does not run its own YuNet pass and identity work
+            # cannot slow the human/weapon path. The face records computed here
+            # are shared with the pipeline, so YuNet runs once per recognition
+            # frame, not twice.
+            self._frame_counter += 1
+            every = max(1, int(settings.face_recognition_every_n_frames))
+            recognition_due = self._frame_counter % every == 0
+            faces: list[dict] = []
+            if recognition_due:
+                try:
+                    faces = face_service.detect_faces(frame)
+                except Exception as exc:  # noqa: BLE001 - never stop detection
+                    self.recognition_errors += 1
+                    print(f"[stream:{self.camera_id}] face detection failed: {exc}")
+                    faces = []
+
             t0 = time.time()
-            detections = pipeline.run(frame)
+            detections = pipeline.run(frame, faces=faces)
             self.inference_ms = round((time.time() - t0) * 1000, 1)
 
             detections = self._maybe_add_demo_weapon(detections, frame)
 
-            pipeline.annotate(frame, detections)
-            self._update_stats(now, detections)
+            recognitions: list[FaceRecognitionResult] = []
+            if recognition_due:
+                recognitions = self._recognize(frame, faces)
+
+            pipeline.annotate(frame, detections, self._overlay_recognitions())
+            self._update_stats(now, detections, recognitions, recognition_due)
             self._encode(frame)
 
             reporter.report(self.camera_id, detections, frame, self.mode)
+            if recognitions:
+                reporter.report_recognition(self.camera_id, recognitions, frame, self.mode)
 
         cap.release()
+
+    def _recognize(self, frame, faces) -> list[FaceRecognitionResult]:
+        """Run identity matching for this frame. Never raises.
+
+        A recognition failure is counted and logged; YOLO detection, the MJPEG
+        stream and detection reporting are unaffected.
+        """
+        self._recognition_pass += 1
+        try:
+            results = face_service.recognize_frame(
+                frame,
+                self.camera_id,
+                faces=faces,
+                tracker=self._track_for,
+            )
+        except Exception as exc:  # noqa: BLE001 - recognition must never crash the worker
+            self.recognition_errors += 1
+            print(f"[stream:{self.camera_id}] recognition failed: {exc}")
+            return []
+        self._latest_recognitions = results
+        self._recognitions_until = time.time() + self._OVERLAY_TTL
+        return results
+
+    def _overlay_recognitions(self) -> list[FaceRecognitionResult]:
+        """The identity overlays worth drawing right now.
+
+        Recognition runs every Nth frame, so between passes the labels from the
+        most recent pass are reused for a short TTL to avoid flicker. The boxes
+        are always the real coordinates the AI service returned — they may lag
+        the live frame by up to the recognition interval, and stale labels are
+        dropped entirely rather than being drawn indefinitely.
+        """
+        if time.time() > self._recognitions_until:
+            return []
+        return self._latest_recognitions
+
+    def _track_for(self, bbox) -> str:
+        """Transient per-camera handle for repeated sightings of one face.
+
+        Associates this pass's face boxes with the previous pass by greedy
+        bbox-IoU so repeated observations can be de-duplicated and alert
+        cooldowns applied. It is a SHORT-LIVED SESSION HANDLE ONLY and makes NO
+        claim about the person's real identity — an unmatched face keeps its
+        track id while staying anonymous.
+        """
+        now = time.time()
+        self._tracks = [t for t in self._tracks if now - t["ts"] <= self._TRACK_TTL]
+        best, best_iou = None, 0.0
+        for track in self._tracks:
+            if track.get("pass") == self._recognition_pass:
+                continue  # already claimed by another face in this same pass
+            iou = face_service.bbox_iou(bbox, track["bbox"])
+            if iou > best_iou:
+                best, best_iou = track, iou
+        if best is not None and best_iou >= _TRACK_IOU:
+            best["bbox"] = list(bbox)
+            best["ts"] = now
+            best["pass"] = self._recognition_pass
+            return str(best["id"])
+
+        self._track_seq += 1
+        track_id = f"{self.camera_id}-face-{self._track_seq}"
+        self._tracks.append(
+            {"id": track_id, "bbox": list(bbox), "ts": now, "pass": self._recognition_pass}
+        )
+        return track_id
 
     def _maybe_add_demo_weapon(self, detections: list[Detection], frame) -> list[Detection]:
         if time.time() >= self._demo_weapon_until:
@@ -135,9 +264,19 @@ class _CameraWorker:
         )
         return detections
 
-    def _update_stats(self, now: float, detections: list[Detection]) -> None:
+    def _update_stats(self, now: float, detections: list[Detection],
+                      recognitions: list[FaceRecognitionResult] | None = None,
+                      recognition_due: bool = True) -> None:
         self.people = sum(1 for d in detections if d.type == "human")
         self.weapons = sum(1 for d in detections if d.type == "weapon")
+        # Face and identity counters only change on frames where face
+        # detection / recognition actually ran, so they reflect the latest real
+        # measurement rather than decaying to zero between recognition passes.
+        if recognition_due:
+            self.faces = sum(1 for d in detections if d.type == "face")
+        if recognitions is not None and recognitions:
+            self.known_faces = sum(1 for r in recognitions if r.status == "KNOWN")
+            self.unknown_faces = sum(1 for r in recognitions if r.status == "UNKNOWN")
         # Smooth FPS from the achieved processing cadence.
         if not hasattr(self, "_frame_times"):
             self._frame_times: list[float] = []

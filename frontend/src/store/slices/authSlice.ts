@@ -1,7 +1,7 @@
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
 import type { PayloadAction } from '@reduxjs/toolkit';
 import { authService } from '@/services/authService';
-import { tokenStorage } from '@/utils/storage';
+import { assetTokenStorage, tokenStorage } from '@/utils/storage';
 import type { User } from '@/types';
 
 /**
@@ -34,6 +34,8 @@ export const login = createAsyncThunk<
   try {
     const session = await authService.login(email, password);
     tokenStorage.set(session.token);
+    // The narrowed credential for /uploads image URLs (see utils/assetUrl.ts).
+    assetTokenStorage.set(session.assetToken);
     return session;
   } catch (err) {
     return rejectWithValue((err as { message?: string }).message || 'Login failed');
@@ -46,9 +48,13 @@ export const restoreSession = createAsyncThunk<User | null>(
   async () => {
     if (!tokenStorage.get()) return null;
     try {
-      return await authService.me();
+      const { user, assetToken } = await authService.me();
+      // Refreshed on every boot, because it expires sooner than the session.
+      assetTokenStorage.set(assetToken);
+      return user;
     } catch {
       tokenStorage.clear();
+      assetTokenStorage.clear();
       return null;
     }
   }
@@ -63,6 +69,7 @@ const authSlice = createSlice({
       state.token = null;
       state.status = 'idle';
       tokenStorage.clear();
+      assetTokenStorage.clear();
     },
   },
   extraReducers: (builder) => {

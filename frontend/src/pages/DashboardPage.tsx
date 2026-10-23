@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { Cctv, Users, Bell, Activity, ShieldAlert, Cpu } from 'lucide-react';
+import { Cctv, Users, Bell, Activity, ShieldAlert, Cpu, UserRound, UserCheck, ScanFace } from 'lucide-react';
 import {
   PageHeader,
   Card,
@@ -82,6 +82,33 @@ export function DashboardPage() {
         <StatTile icon={Cpu} label="AI Status" value={aiOperational ? 'Operational' : 'Degraded'} tone={aiOperational ? 'safe' : 'warning'} />
       </div>
 
+      {/*
+        Review 2 KPIs — additive, and every figure is a real count computed by
+        the backend (dashboardService.computeDashboardStats). Nothing here is
+        hardcoded or recomputed in the browser.
+      */}
+      <div className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-3">
+        <StatTile
+          icon={UserRound}
+          label="Registered People"
+          value={`${stats?.totalPeople ?? 0}`}
+          sub={`${stats?.recognitionEnabledPeople ?? 0} with recognition enabled`}
+        />
+        <StatTile
+          icon={UserCheck}
+          label="Present Today"
+          value={`${stats?.presentToday ?? 0}`}
+          tone={stats?.presentToday ? 'safe' : undefined}
+        />
+        <StatTile
+          icon={ScanFace}
+          label="Unknown Identities (today)"
+          value={`${stats?.unknownIdentitiesToday ?? 0}`}
+          sub="Faces not matched to a registered person"
+          tone={stats?.unknownIdentitiesToday ? 'warning' : undefined}
+        />
+      </div>
+
       <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
         {/* AI system status */}
         <Card>
@@ -91,9 +118,32 @@ export function DashboardPage() {
               stats.ai.detectors.map((d) => (
                 <div key={d.key} className="flex items-center justify-between text-sm">
                   <span className="text-content-muted">{d.label}</span>
+                  {/*
+                    Review 2 widened the detector status vocabulary. ACTIVE is
+                    shown only for a genuinely operational service; 'error' is
+                    surfaced as an error rather than flattened to unavailable.
+                  */}
                   <StatusIndicator
-                    status={d.status === 'active' ? 'ai' : d.status === 'demo' ? 'warning' : 'offline'}
-                    label={d.status === 'active' ? 'Active' : d.status === 'demo' ? 'Demo' : 'Unavailable'}
+                    status={
+                      d.status === 'active'
+                        ? 'ai'
+                        : d.status === 'demo'
+                          ? 'warning'
+                          : d.status === 'error'
+                            ? 'error'
+                            : 'offline'
+                    }
+                    label={
+                      d.status === 'active'
+                        ? 'Active'
+                        : d.status === 'demo'
+                          ? 'Demo'
+                          : d.status === 'error'
+                            ? 'Error'
+                            : d.status === 'inactive'
+                              ? 'Inactive'
+                              : 'Unavailable'
+                    }
                   />
                 </div>
               ))

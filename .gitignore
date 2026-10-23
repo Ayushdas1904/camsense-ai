@@ -22,6 +22,13 @@ models/*.pt
 models/*.onnx
 models/*.weights
 
+# Stored images (face images / biometric data — never commit)
+# Detection snapshots and person registration portraits are written here at
+# runtime; the directory itself is kept via its .gitkeep placeholder.
+uploads/*
+**/uploads/*
+!**/uploads/.gitkeep
+
 # Logs & OS
 *.log
 .DS_Store

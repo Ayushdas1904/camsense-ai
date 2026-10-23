@@ -8,7 +8,18 @@ const alertSchema = new mongoose.Schema(
   {
     type: {
       type: String,
-      enum: ['weapon', 'unknown_person', 'intrusion', 'camera_offline', 'system'],
+      // 'unknown_identity' is the Review 2 category for a face the recognition
+      // pipeline could not match to a registered person. The older
+      // 'unknown_person' value is deliberately RETAINED: removing an enum
+      // value would invalidate any document already stored with it.
+      enum: [
+        'weapon',
+        'unknown_person',
+        'unknown_identity',
+        'intrusion',
+        'camera_offline',
+        'system',
+      ],
       required: true,
       index: true,
     },

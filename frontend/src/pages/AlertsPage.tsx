@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ShieldAlert, Bell, CheckCircle2, Eye } from 'lucide-react';
+import { ShieldAlert, Bell, CheckCircle2, Eye, ScanFace } from 'lucide-react';
 import {
   PageHeader,
   Card,
@@ -30,6 +30,34 @@ const statusTone: Record<AlertStatus, 'neutral' | 'safe' | 'warning'> = {
   acknowledged: 'neutral',
   resolved: 'safe',
 };
+
+/**
+ * Review 2 added the 'unknown_identity' category. The older 'unknown_person'
+ * value is still accepted by the backend enum for already-stored documents, so
+ * both map to the same operator-facing label.
+ */
+const alertTypeLabel: Record<string, string> = {
+  weapon: 'Weapon',
+  unknown_identity: 'Unknown identity',
+  unknown_person: 'Unknown identity',
+  intrusion: 'Intrusion',
+  camera_offline: 'Camera offline',
+  system: 'System',
+};
+
+function typeLabel(type: string): string {
+  return alertTypeLabel[type] ?? type.replace(/_/g, ' ');
+}
+
+function isUnknownIdentity(type: string): boolean {
+  return type === 'unknown_identity' || type === 'unknown_person';
+}
+
+/** The caveat an operator must see on every unmatched-face alert. */
+const UNKNOWN_IDENTITY_CAVEAT =
+  'An unknown identity means the system could not confidently match this face to a registered ' +
+  'person. It is not proof of malicious intent or that the person is unauthorized — review the ' +
+  'snapshot and decide.';
 
 export function AlertsPage() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
@@ -140,7 +168,11 @@ export function AlertsPage() {
                         : 'bg-info/10 text-info'
                   }`}
                 >
-                  <ShieldAlert className="h-4 w-4" />
+                  {isUnknownIdentity(alert.type) ? (
+                    <ScanFace className="h-4 w-4" />
+                  ) : (
+                    <ShieldAlert className="h-4 w-4" />
+                  )}
                 </div>
 
                 <div className="min-w-0 flex-1">
@@ -150,6 +182,7 @@ export function AlertsPage() {
                   </p>
                 </div>
 
+                <Badge tone="neutral">{typeLabel(alert.type)}</Badge>
                 <Badge tone={severityTone[alert.severity]}>{alert.severity.toUpperCase()}</Badge>
                 <Badge tone={statusTone[alert.status]}>{alert.status}</Badge>
 
@@ -207,6 +240,7 @@ function AlertDetailModal({
 }) {
   if (!alert) return null;
   const snapshot = assetUrl(alert.snapshot);
+  const unknownIdentity = isUnknownIdentity(alert.type);
 
   return (
     <Modal
@@ -229,17 +263,41 @@ function AlertDetailModal({
       }
     >
       <div className="space-y-4">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone="neutral">{typeLabel(alert.type)}</Badge>
           <Badge tone={severityTone[alert.severity]}>{alert.severity.toUpperCase()}</Badge>
           <Badge tone={statusTone[alert.status]}>{alert.status}</Badge>
         </div>
         <p className="text-sm text-content">{alert.message}</p>
         <dl className="grid grid-cols-2 gap-3 text-sm">
           <Field label="Camera" value={alert.cameraName || alert.cameraId} />
-          <Field label="Object" value={alert.objectClass || '—'} />
-          <Field label="Confidence" value={alert.confidence ? `${Math.round(alert.confidence * 100)}%` : '—'} />
+          <Field label="Alert type" value={typeLabel(alert.type)} />
+          {unknownIdentity ? (
+            // Recognition status, in the operator's language. No name is shown,
+            // because an unmatched face has no confirmed identity to show.
+            <Field label="Recognition status" value="Unmatched face — no registered identity met the threshold" />
+          ) : (
+            <Field label="Object" value={alert.objectClass || '—'} />
+          )}
+          {/*
+            Explicitly "Detection confidence": the object detector's score. A
+            face-recognition similarity is a different measurement and is never
+            rendered in this field — the backend deliberately leaves `confidence`
+            undefined on unknown-identity alerts.
+          */}
+          <Field
+            label="Detection confidence"
+            value={alert.confidence ? `${Math.round(alert.confidence * 100)}%` : '—'}
+          />
           <Field label="Time" value={formatDateTime(alert.timestamp)} />
         </dl>
+
+        {unknownIdentity && (
+          <p className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+            {UNKNOWN_IDENTITY_CAVEAT}
+          </p>
+        )}
+
         {snapshot && (
           <div>
             <p className="mb-1.5 text-xs text-content-muted">Snapshot evidence</p>

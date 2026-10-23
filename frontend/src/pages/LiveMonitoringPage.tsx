@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Play, Square, ShieldAlert, Video, Gauge, Users, Cctv } from 'lucide-react';
+import {
+  Play,
+  Square,
+  ShieldAlert,
+  Video,
+  Gauge,
+  Users,
+  Cctv,
+  ScanFace,
+  UserCheck,
+} from 'lucide-react';
 import {
   PageHeader,
   Card,
@@ -14,18 +24,71 @@ import {
 } from '@/components/ui';
 import { cameraService } from '@/services/cameraService';
 import { dashboardService } from '@/services/dashboardService';
+import { recognitionService } from '@/services/recognitionService';
 import { useSocketEvent } from '@/hooks/useSocketEvent';
 import { SocketEvents } from '@/services/socket';
 import { formatTime } from '@/utils/format';
-import type { AiStatus, Camera, DetectionEventPayload, StreamStats, ViewStatus } from '@/types';
+import type {
+  AiStatus,
+  Camera,
+  DetectionEventPayload,
+  DetectorStatus,
+  IdentityUnknownPayload,
+  PersonRecognizedPayload,
+  StreamStats,
+  ViewStatus,
+} from '@/types';
 
 /**
- * Live Monitoring — the Review 1 centerpiece.
+ * Live Monitoring — the Review 1 centerpiece, extended in Review 2 with
+ * identity results.
  *
  * The annotated video (with real detection boxes drawn by the AI service) is
  * proxied through the backend and shown in an <img>. Live stats are polled
  * while monitoring; recent detections stream in over Socket.IO.
+ *
+ * OVERLAY POLICY (Review 2): bounding boxes and identity labels are drawn
+ * SERVER-SIDE by the AI service, onto the MJPEG frames themselves, from the
+ * coordinates its own models produced. This page deliberately draws no
+ * client-side overlay on top of the <img>. The stream is rendered with
+ * object-contain letterboxing, so a client-side box would have to re-derive the
+ * rendered content box from the intrinsic frame aspect ratio versus the element
+ * box and then rescale the AI service's pixel coordinates (which are in the
+ * processed frame's space, AI_SERVICE_FRAME_WIDTH = 640). A box that is even
+ * slightly misaligned would point at the wrong person, which is worse than no
+ * box at all — so the accurate server-drawn overlay stays the single source of
+ * truth. Identity results are reported textually in the panel instead, and when
+ * no recognition result is available the service state is shown rather than
+ * placeholder identity information.
+ *
+ * MEASUREMENT POLICY: object-detection confidence (Recent Detections) and
+ * face-recognition similarity (Identity Results) are different measurements.
+ * They live in different panels, carry different labels, and never share a
+ * column or a formatting helper.
  */
+
+/** One per-face outcome, from the backend's verified recognition events. */
+interface IdentityFeedItem {
+  key: string;
+  status: 'known' | 'unknown';
+  /** Populated ONLY for a confirmed match. */
+  personName?: string;
+  similarity: number | null;
+  /**
+   * The threshold the match was judged against. Absent for items seeded from
+   * the persisted event history, which does not record it — in that case no
+   * threshold is displayed rather than a guessed one.
+   */
+  threshold?: number;
+  /**
+   * Absent for history-seeded items: whether that recognition marked
+   * attendance is not recorded on the event, so no claim is made either way.
+   */
+  attendanceMarked?: boolean;
+  source: 'real' | 'demo';
+  timestamp: string;
+}
+
 export function LiveMonitoringPage() {
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [status, setStatus] = useState<ViewStatus>('loading');
@@ -39,6 +102,7 @@ export function LiveMonitoringPage() {
   const [stats, setStats] = useState<StreamStats | null>(null);
   const [ai, setAi] = useState<AiStatus | null>(null);
   const [recent, setRecent] = useState<DetectionEventPayload[]>([]);
+  const [identities, setIdentities] = useState<IdentityFeedItem[]>([]);
 
   const statsTimer = useRef<number | null>(null);
 
@@ -90,6 +154,93 @@ export function LiveMonitoringPage() {
     setRecent((prev) => [payload, ...prev].slice(0, 8));
   });
 
+  // ── Review 2 · identity results ────────────────────────────
+  // Seeded from PERSISTED recognition events, so a client that just opened the
+  // page (or was disconnected) still sees recent outcomes. The socket events
+  // below SUPPLEMENT this; they do not replace database persistence.
+  useEffect(() => {
+    if (!selected) return;
+    let cancelled = false;
+    recognitionService
+      .list({ cameraId: selected.cameraId, limit: 8 })
+      .then((result) => {
+        if (cancelled) return;
+        setIdentities(
+          result.items
+            .filter((event) => event.status === 'known' || event.status === 'unknown')
+            .map((event) => ({
+              key: event.id,
+              status: event.status === 'known' ? ('known' as const) : ('unknown' as const),
+              // A name only ever travels with a verified 'known' event.
+              personName: event.status === 'known' ? (event.personName ?? undefined) : undefined,
+              similarity: event.similarity,
+              source: event.source,
+              timestamp: event.timestamp,
+            }))
+        );
+      })
+      .catch(() => {
+        /* non-fatal — the live feed below still works */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected]);
+
+  // Both socket events are emitted by the backend only AFTER it re-verified the
+  // result against its own person records and its own threshold, so nothing
+  // here is a raw model guess.
+  useSocketEvent<PersonRecognizedPayload>(SocketEvents.PERSON_RECOGNIZED, (payload) => {
+    if (!selected || payload.cameraId !== selected.cameraId) return;
+    setIdentities((prev) =>
+      [
+        {
+          key: payload.eventId,
+          status: 'known' as const,
+          personName: payload.personName,
+          similarity: payload.similarity,
+          threshold: payload.threshold,
+          attendanceMarked: payload.attendanceMarked,
+          source: payload.source,
+          timestamp: payload.timestamp,
+        },
+        ...prev,
+      ].slice(0, 8)
+    );
+  });
+
+  useSocketEvent<IdentityUnknownPayload>(SocketEvents.IDENTITY_UNKNOWN, (payload) => {
+    if (!selected || payload.cameraId !== selected.cameraId) return;
+    setIdentities((prev) =>
+      [
+        {
+          key: payload.eventId,
+          status: 'unknown' as const,
+          // No name is carried, and none is invented: an unmatched face has no
+          // identity to display.
+          similarity: payload.similarity,
+          threshold: payload.threshold,
+          attendanceMarked: false,
+          source: payload.source,
+          timestamp: payload.timestamp,
+        },
+        ...prev,
+      ].slice(0, 8)
+    );
+  });
+
+  // Recognition availability can change at runtime (models loaded/unloaded).
+  // When the backend announces a transition, re-read the real detector array
+  // rather than inferring a new status locally.
+  useSocketEvent<{ available: boolean }>(SocketEvents.RECOGNITION_STATUS, () => {
+    dashboardService
+      .stats()
+      .then((data) => setAi(data.ai))
+      .catch(() => {
+        /* non-fatal — the panel keeps the last known status */
+      });
+  });
+
   async function handleStart() {
     if (!selected) return;
     setStarting(true);
@@ -119,6 +270,7 @@ export function LiveMonitoringPage() {
     if (running) handleStop();
     setSelectedId(id);
     setRecent([]);
+    setIdentities([]);
   }
 
   async function handleDemoWeapon() {
@@ -143,7 +295,12 @@ export function LiveMonitoringPage() {
     );
   }
 
-  const weaponActive = ai?.detectors?.find((d) => d.key === 'weapon')?.status === 'active';
+  const detectorByKey = new Map<string, DetectorStatus>(
+    (ai?.detectors ?? []).map((d) => [d.key, d])
+  );
+  const faceRecognitionDetector = detectorByKey.get('face_recognition');
+  const recognitionOperational =
+    faceRecognitionDetector?.status === 'active' || stats?.recognition_available === true;
 
   return (
     <div>
@@ -222,7 +379,9 @@ export function LiveMonitoringPage() {
               {running && (
                 <div className="flex items-center justify-between">
                   <p className="text-xs text-content-faint">
-                    Detection overlays are rendered from real model coordinates.
+                    Detection boxes and identity labels are drawn by the AI service from real model
+                    coordinates. A name is drawn only for a face that cleared the recognition
+                    threshold.
                   </p>
                   <Button
                     variant="secondary"
@@ -256,9 +415,108 @@ export function LiveMonitoringPage() {
           <Card>
             <CardHeader title="AI System" />
             <CardBody className="space-y-2.5 text-sm">
-              <DetectorRow label="Human Detection" active={ai?.detectors?.find((d) => d.key === 'human')?.status === 'active'} />
-              <DetectorRow label="Weapon Detection" active={weaponActive} />
+              {/*
+                Each row renders the REAL status the AI service reported for that
+                service. ACTIVE appears only when the backend says the service is
+                genuinely operational; a missing entry (AI service unreachable)
+                reads UNAVAILABLE rather than defaulting to active.
+              */}
+              <ServiceRow label="Human Detection" detector={detectorByKey.get('human')} />
+              <ServiceRow label="Weapon Detection" detector={detectorByKey.get('weapon')} />
+              <ServiceRow label="Face Detection" detector={detectorByKey.get('face')} />
+              <ServiceRow label="Face Recognition" detector={faceRecognitionDetector} />
+              <ServiceRow label="Attendance Service" detector={detectorByKey.get('attendance')} />
               <DetectorRow label="Video Processing" active={running} activeLabel="Active" idleLabel="Idle" />
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader title="Identity Results" description="Face recognition — most recent faces" />
+            <CardBody className="space-y-3">
+              {!recognitionOperational && (
+                <p className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+                  Face recognition is{' '}
+                  {faceRecognitionDetector?.status === 'error' ? 'reporting an error' : 'unavailable'}
+                  . Human and weapon detection continue to work; no identity results will appear
+                  until recognition is operational.
+                </p>
+              )}
+
+              {identities.length === 0 ? (
+                <p className="py-3 text-center text-xs text-content-faint">
+                  {running
+                    ? 'No face has been evaluated yet on this camera.'
+                    : 'Start the stream to see identity results.'}
+                </p>
+              ) : (
+                <ul className="space-y-2.5">
+                  {identities.map((item) => (
+                    <li
+                      key={item.key}
+                      className="rounded-lg border border-border bg-surface px-3 py-2.5 text-xs"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="flex min-w-0 items-center gap-2">
+                          <ScanFace
+                            className={
+                              item.status === 'known'
+                                ? 'h-3.5 w-3.5 shrink-0 text-safe'
+                                : 'h-3.5 w-3.5 shrink-0 text-warning'
+                            }
+                            aria-hidden="true"
+                          />
+                          {/* A name is rendered ONLY for a confirmed match. */}
+                          <span className="truncate text-content">
+                            {item.status === 'known' ? item.personName : 'Unknown identity'}
+                          </span>
+                          {item.source === 'demo' && <Badge tone="info">DEMO</Badge>}
+                        </span>
+                        <span className="shrink-0 text-content-faint">
+                          {formatTime(item.timestamp)}
+                        </span>
+                      </div>
+
+                      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-content-muted">
+                        {/*
+                          Labelled "Face similarity" on purpose. This is a cosine
+                          similarity between face embeddings — a different
+                          measurement from the detection confidence shown in the
+                          Recent Detections panel, and not a probability.
+                        */}
+                        <span>
+                          Face similarity:{' '}
+                          <span className="font-mono text-content">
+                            {item.similarity !== null ? item.similarity.toFixed(3) : 'n/a'}
+                          </span>
+                        </span>
+                        {typeof item.threshold === 'number' && (
+                          <span className="text-content-faint">
+                            threshold {item.threshold.toFixed(3)}
+                          </span>
+                        )}
+                      </div>
+
+                      {item.status === 'known' && item.attendanceMarked === true && (
+                        <p className="mt-1.5 flex items-center gap-1.5 text-safe">
+                          <UserCheck className="h-3.5 w-3.5" aria-hidden="true" />
+                          Attendance marked for today
+                        </p>
+                      )}
+                      {item.status === 'unknown' && (
+                        <p className="mt-1.5 text-content-faint">
+                          No registered identity met the threshold. Review the event on the Alerts
+                          page.
+                        </p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <p className="border-t border-border pt-2.5 text-xs text-content-faint">
+                An unknown identity means the system could not confidently match the face to a
+                registered person. It does not prove the person is unauthorized or dangerous.
+              </p>
             </CardBody>
           </Card>
 
@@ -269,11 +527,20 @@ export function LiveMonitoringPage() {
               <Metric icon={<Gauge className="h-4 w-4" />} label="Inference" value={running && stats ? `${stats.inference_ms}ms` : '—'} />
               <Metric icon={<Users className="h-4 w-4" />} label="People" value={running ? String(stats?.people ?? 0) : '—'} />
               <Metric icon={<ShieldAlert className="h-4 w-4" />} label="Weapons" value={running ? String(stats?.weapons ?? 0) : '—'} />
+              <Metric icon={<ScanFace className="h-4 w-4" />} label="Faces" value={running ? String(stats?.faces ?? 0) : '—'} />
+              <Metric
+                icon={<UserCheck className="h-4 w-4" />}
+                label="Known faces"
+                value={running ? String(stats?.known_faces ?? 0) : '—'}
+              />
             </CardBody>
           </Card>
 
           <Card>
-            <CardHeader title="Recent Detections" />
+            <CardHeader
+              title="Recent Detections"
+              description="Object detection — people and weapons"
+            />
             <CardBody>
               {recent.length === 0 ? (
                 <p className="py-4 text-center text-xs text-content-faint">
@@ -282,13 +549,26 @@ export function LiveMonitoringPage() {
               ) : (
                 <ul className="space-y-2">
                   {recent.map((d, i) => (
-                    <li key={`${d.id}-${i}`} className="flex items-center justify-between text-xs">
-                      <span className="flex items-center gap-2">
-                        <Cctv className="h-3.5 w-3.5 text-content-faint" />
-                        <span className="capitalize text-content">{d.class} detected</span>
-                        {d.source === 'demo' && <Badge tone="info">DEMO</Badge>}
-                      </span>
-                      <span className="text-content-faint">{formatTime(d.timestamp)}</span>
+                    <li key={`${d.id}-${i}`} className="text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="flex items-center gap-2">
+                          <Cctv className="h-3.5 w-3.5 text-content-faint" />
+                          <span className="capitalize text-content">{d.class} detected</span>
+                          {d.source === 'demo' && <Badge tone="info">DEMO</Badge>}
+                        </span>
+                        <span className="text-content-faint">{formatTime(d.timestamp)}</span>
+                      </div>
+                      {/*
+                        Labelled "Detection confidence" on purpose: this is the
+                        object detector's score, a different measurement from the
+                        face similarity shown in Identity Results above.
+                      */}
+                      <p className="mt-0.5 pl-5 text-content-muted">
+                        Detection confidence:{' '}
+                        <span className="font-mono text-content">
+                          {Math.round(d.confidence * 100)}%
+                        </span>
+                      </p>
                     </li>
                   ))}
                 </ul>
@@ -325,6 +605,38 @@ function DetectorRow({
     <div className="flex items-center justify-between">
       <span className="text-content-muted">{label}</span>
       <StatusIndicator status={active ? 'ai' : 'offline'} label={active ? activeLabel : idleLabel} />
+    </div>
+  );
+}
+
+/**
+ * One AI-service row in the status panel, driven by the REAL detector status
+ * array the backend relays from the AI service.
+ *
+ * ACTIVE is shown only when the service reported 'active'. A detector that is
+ * absent from the array — which is what happens when the AI service is
+ * unreachable — reads UNAVAILABLE. Nothing here ever optimistically reports a
+ * service as operational.
+ */
+function ServiceRow({ label, detector }: { label: string; detector?: DetectorStatus }) {
+  const presentation: Record<
+    DetectorStatus['status'],
+    { status: 'ai' | 'warning' | 'offline' | 'error'; label: string }
+  > = {
+    active: { status: 'ai', label: 'ACTIVE' },
+    demo: { status: 'warning', label: 'DEMO' },
+    inactive: { status: 'offline', label: 'INACTIVE' },
+    unavailable: { status: 'offline', label: 'UNAVAILABLE' },
+    error: { status: 'error', label: 'ERROR' },
+  };
+  const view = detector
+    ? presentation[detector.status]
+    : { status: 'offline' as const, label: 'UNAVAILABLE' };
+
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-content-muted">{label}</span>
+      <StatusIndicator status={view.status} label={view.label} />
     </div>
   );
 }

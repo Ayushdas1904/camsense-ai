@@ -6,6 +6,9 @@ import detectionRoutes from './detectionRoutes.js';
 import alertRoutes from './alertRoutes.js';
 import dashboardRoutes from './dashboardRoutes.js';
 import aiRoutes from './aiRoutes.js';
+import peopleRoutes from './peopleRoutes.js';
+import attendanceRoutes from './attendanceRoutes.js';
+import recognitionEventRoutes from './recognitionEventRoutes.js';
 
 /**
  * Central API router. Every feature area mounts here under /api.
@@ -27,9 +30,14 @@ router.use('/alerts', alertRoutes);
 router.use('/dashboard', dashboardRoutes);
 router.use('/ai', aiRoutes); // backend <-> AI service (ingest + status)
 
+// ── Review 2: "Teach CCTV to IDENTIFY" ─────────────────────────
+router.use('/people', peopleRoutes);
+// GET only — attendance is created solely by the trusted recognition workflow
+// behind POST /api/ai/recognition, never by a browser client.
+router.use('/attendance', attendanceRoutes);
+router.use('/recognition-events', recognitionEventRoutes); // GET only
+
 // ── Planned API surface (later reviews) ────────────────────────
-// router.use('/people', peopleRoutes);         // Review 2
-// router.use('/attendance', attendanceRoutes); // Review 2
 // router.use('/occupancy', occupancyRoutes);   // Review 3
 // router.use('/energy', energyRoutes);         // Review 3
 // router.use('/analytics', analyticsRoutes);   // Review 3

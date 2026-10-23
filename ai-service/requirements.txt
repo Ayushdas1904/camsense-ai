@@ -12,4 +12,19 @@ numpy<2
 ultralytics==8.3.0   # YOLOv8/YOLOv11 — brings torch (CPU) as a dependency
 
 # ── Added in later reviews ─────────────────────────────────────
-# face-recognition==1.3.0   # face embeddings (Review 2)
+# Review 2 (face recognition) adds NO new installable package.
+#
+# Face detection and face recognition both run as ONNX models through the
+# opencv-python-headless pin above (its `objdetect`/`dnn` modules provide
+# cv2.FaceDetectorYN and cv2.FaceRecognizerSF), so nothing new is installed:
+#   - face_detection_yunet_2023mar.onnx      → ../models/  (YuNet detector)
+#   - face_recognition_sface_2021dec.onnx    → ../models/  (SFace, 128-d)
+# Fetch both with:  python download_assets.py
+#
+# The earlier placeholder `face-recognition==1.3.0` was removed: it is a
+# dlib wrapper that requires compiling native dlib (no wheel for this
+# platform/Python combination), which is not possible in this environment.
+# insightface likewise needs a native/Cython build step, and deepface pulls
+# TensorFlow, which conflicts with the torch CPU stack ultralytics installs
+# and with the numpy<2 pin above. See app/recognition/face_model.py for the
+# full rationale.
