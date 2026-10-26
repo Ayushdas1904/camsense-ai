@@ -73,6 +73,26 @@ class Settings(BaseSettings):
     # Base URL the enrolled embeddings are fetched from. Empty → use backend_url.
     embedding_source_url: str = ""
 
+    # ── Occupancy estimation (Review 3) ────────────────────────
+    # Occupancy reuses the EXISTING YOLO human detections — no second model and
+    # no new dependency. Set to False to stop estimating and reporting it; YOLO
+    # human/weapon detection is unaffected either way.
+    occupancy_enabled: bool = True
+    # Minimum seconds between occupancy POSTs per camera. A headcount is cheap
+    # and slow-moving, so it is reported far less often than detections — but a
+    # CHANGE in the count bypasses this interval so a real transition is not
+    # delayed by it (see EventReporter.report_occupancy).
+    occupancy_report_interval: float = 5.0
+    # A person track must have been seen in at least this many CONSECUTIVE
+    # processed frames before it counts towards occupancy. 1 would let a
+    # single-frame false positive move the headcount; 2 is the cheapest rule
+    # that makes a blip non-reportable while staying responsive.
+    occupancy_min_track_hits: int = 2
+    # Seconds a person track survives without being re-seen. Long enough to
+    # ride out a missed frame or a brief occlusion, short enough that someone
+    # who has left is not counted indefinitely. Mirrors the face track TTL.
+    occupancy_track_ttl: float = 3.0
+
     # ── Reporting events back to the Node backend ──────────────
     backend_url: str = "http://127.0.0.1:5050"
     # Shared service secret. DEFAULT EMPTY, deliberately: it must be set to the

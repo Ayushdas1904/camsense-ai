@@ -9,6 +9,11 @@ import aiRoutes from './aiRoutes.js';
 import peopleRoutes from './peopleRoutes.js';
 import attendanceRoutes from './attendanceRoutes.js';
 import recognitionEventRoutes from './recognitionEventRoutes.js';
+import roomRoutes from './roomRoutes.js';
+import occupancyRoutes from './occupancyRoutes.js';
+import deviceRoutes from './deviceRoutes.js';
+import automationRoutes from './automationRoutes.js';
+import energyRoutes from './energyRoutes.js';
 
 /**
  * Central API router. Every feature area mounts here under /api.
@@ -37,9 +42,20 @@ router.use('/people', peopleRoutes);
 router.use('/attendance', attendanceRoutes);
 router.use('/recognition-events', recognitionEventRoutes); // GET only
 
+// ── Review 3: "Teach CCTV to ACT" ──────────────────────────────
+router.use('/rooms', roomRoutes);
+// GET only — occupancy figures are created solely by the trusted AI workflow
+// behind POST /api/ai/occupancy, never by a browser client.
+router.use('/occupancy', occupancyRoutes);
+// Device management and manual control. Reads need auth; EVERY mutation,
+// including a command, additionally needs the admin role.
+router.use('/devices', deviceRoutes);
+router.use('/automation', automationRoutes);
+// GET only — every energy figure is derived from persisted device state, so
+// there is nothing for a client to write.
+router.use('/energy', energyRoutes);
+
 // ── Planned API surface (later reviews) ────────────────────────
-// router.use('/occupancy', occupancyRoutes);   // Review 3
-// router.use('/energy', energyRoutes);         // Review 3
 // router.use('/analytics', analyticsRoutes);   // Review 3
 // router.use('/notifications', notificationRoutes);
 

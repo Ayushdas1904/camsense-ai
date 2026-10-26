@@ -49,7 +49,7 @@ anyone.
 |---|---|
 | `app/recognition/face_model.py` | `FaceDetectorModel` (`cv2.FaceDetectorYN`, `model_name = "yunet_2023mar"`) and `FaceEmbedderModel` (`cv2.FaceRecognizerSF`, 128-d). Each exposes a lock-guarded `instance()` classmethod, `available`, `last_error`, `model_name`, `embedding_dim`. These are the **only** places either OpenCV class is constructed. |
 | `app/recognition/face_service.py` | `detect_faces(frame)`, `generate_embedding(frame, face)`, `cosine_similarity(a, b)`, `bbox_iou(a, b)`, `is_low_quality(face)`, `match_embedding(embedding, …)`, `register_face(image_bgr)`, `recognize_frame(frame, camera_id, …)`, `decode_image(data)`, `refresh_identity_cache(force)`, `recognition_available()`, `identity_labels_trustworthy()`, `recognition_status()`, plus the `RecognitionStatus` and `RegistrationStatus` vocabularies. |
-| `app/recognition/embedding_cache.py` | `EmbeddingCache` / `embedding_cache` singleton: `ensure_fresh(blocking=…)`, `refresh_blocking()`, `is_stale(grace=…)`, `age_seconds()` / `attempt_age_seconds()`, `snapshot()`, `replace()`, `invalidate()`, `state()`. Holds one stacked NumPy matrix plus parallel metadata. Keeps **two clocks**: when data was last successfully loaded (freshness) and when a refresh was last attempted (back-off). |
+| `app/recognition/embedding_cache.py` | `EmbeddingCache` / `embedding_cache` singleton: `ensure_fresh(blocking=…)` (returns **`loaded`** — is there an identity set to match against), `try_refresh(…)` (same refresh cycle, returns **installed** — did *this* call fetch and install a new generation), `refresh_blocking()`, `is_stale(grace=…)`, `age_seconds()` / `attempt_age_seconds()`, `snapshot()`, `replace()`, `invalidate()`, `state()`. Holds one stacked NumPy matrix plus parallel metadata. Keeps **two clocks**: when data was last successfully loaded (freshness) and when a refresh was last attempted (back-off). |
 | `app/recognition/face_detection.py` | `FaceDetector(Detector)` with `type = "face"`, `label = "Face Detection"` — a normal pipeline detector so face boxes travel the same path and overlay as human/weapon boxes. Reports **presence only**; it never attaches identity. |
 | `app/services/pipeline.py` | `DetectionPipeline.run(frame, faces=None)`, `detector_status()`, `annotate(frame, detections, recognitions=None)`. Composes `HumanDetector`, `WeaponDetector`, `FaceDetector`. |
 | `app/services/stream_manager.py` | Per-camera worker thread. Runs `pipeline.run()` on every processed frame; face detection and recognition run on every *N*th, with no blocking network I/O on this thread. |
@@ -57,10 +57,6 @@ anyone.
 | `app/api/routes.py` | `POST /api/faces/register`, `POST /api/faces/cache/refresh`, `GET /api/faces/status`. Every route here except `/api/health` requires the shared service secret. |
 | `app/api/security.py` | `require_service_secret` — the FastAPI dependency that verifies `x-ai-secret` (constant-time) and fails closed when no secret is configured. |
 | `app/models/schemas.py` | The AI↔backend contract: `FaceBox`, `FaceRecognitionResult`, `FaceRegistrationRequest`, `FaceRegistrationResponse`, `RecognitionStatusResponse`, plus extended `SystemStatus` and `StreamStats`. |
-
-> `app/recognition/face_recognition_service.py` is pre-Review-2 scaffolding whose
-> methods raise `NotImplementedError`. It is superseded by `face_service.py` and
-> is not part of the live pipeline.
 
 ### Backend (Node / Express)
 

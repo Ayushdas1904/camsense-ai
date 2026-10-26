@@ -22,6 +22,32 @@ export const SocketEvents = {
   IDENTITY_UNKNOWN: 'identity:unknown',
   ATTENDANCE_MARKED: 'attendance:marked',
   RECOGNITION_STATUS: 'recognition:status',
+  // ── Review 3 · occupancy ────────────────────────────────────
+  // OCCUPANCY_UPDATE carries one room's current count/status/availability.
+  // The count is NULL — never 0 — when the figure is unavailable or stale, so
+  // a client cannot render an unreadable camera as an empty room.
+  OCCUPANCY_UPDATE: 'occupancy:update',
+  // ROOM_STATUS carries a room's status TRANSITION (previous → current), for
+  // clients that only care about changes rather than every refresh.
+  ROOM_STATUS: 'room:status',
+  // ── Review 3 · devices, automation, energy ──────────────────
+  // DEVICE_STATE carries one device's full serialized state after a command,
+  // a probe or a mode change. It ALWAYS carries `simulated` and `adapterType`
+  // so a client cannot render a simulated device as physical hardware, and a
+  // FAILED command is emitted with `commandFailed: true` and the device's
+  // UNCHANGED reported state — the event never claims a change that the
+  // adapter did not confirm.
+  DEVICE_STATE: 'device:state',
+  // AUTOMATION_ACTION carries one automation decision, INCLUDING the skipped
+  // ones ('skipped_stale_data', 'skipped_override', ...). A rule that refused
+  // to act because the occupancy data could not be trusted is the most
+  // important thing to surface live, so it is emitted like any other decision.
+  AUTOMATION_ACTION: 'automation:action',
+  // ENERGY_UPDATE signals that the derived energy figures are worth
+  // re-fetching (currently emitted after a daily rollup). It carries no
+  // figures itself, so a client always reads them from the API with their
+  // `estimated`/`simulated`/`baseline` caveats attached.
+  ENERGY_UPDATE: 'energy:update',
 };
 
 let io = null;

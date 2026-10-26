@@ -117,6 +117,110 @@ export const env = {
     // and that check must not cost a query per reported face.
     enrolledCountTtlSec: Number(process.env.ENROLLED_COUNT_TTL) || 30,
   },
+
+  // Occupancy monitoring (Review 3). Occupancy is derived from the EXISTING
+  // YOLO human detections; these knobs govern how the backend trusts, stores
+  // and alerts on the figures the AI service reports.
+  occupancy: {
+    // Seconds after which a reported occupancy figure is treated as STALE and
+    // stops being presented as a current reading. A stale figure is reported
+    // with a null count, never 0 — "we cannot tell" is not "the room is
+    // empty", and the later automation feature refuses to switch anything on
+    // evidence this old.
+    staleAfterSec: Number(process.env.OCCUPANCY_STALE_AFTER) || 30,
+    // Minimum seconds between occupancy HISTORY writes for the same room when
+    // nothing has changed. A change in count, status or availability always
+    // writes immediately; this is the heartbeat for a steady room, and it is
+    // what stops one row per processed frame reaching the database.
+    minPersistIntervalSec: Number(process.env.OCCUPANCY_PERSIST_INTERVAL) || 60,
+    // Per-room cooldown for near-capacity / capacity-exceeded alerts, so one
+    // busy room produces one alert rather than one per report. Mirrors the
+    // Review 1/2 cooldown knobs.
+    capacityAlertCooldownSec: Number(process.env.OCCUPANCY_ALERT_COOLDOWN) || 300,
+    // Hard ceiling on GET /api/occupancy/history page size. Enforced in the
+    // rules module, so no request can produce an unbounded query.
+    historyMaxLimit: Number(process.env.OCCUPANCY_HISTORY_MAX_LIMIT) || 500,
+    // Default fraction of a room's capacity at which the status becomes "Near
+    // Capacity". A room may override it; this is the fallback. Ignored when a
+    // room has no configured capacity, since a ratio of an unknown capacity
+    // means nothing.
+    nearCapacityRatio: Number(process.env.OCCUPANCY_NEAR_CAPACITY_RATIO) || 0.8,
+  },
+
+  // Device control (Review 3). Only the SIMULATION adapter is implemented in
+  // this project — there is no MQTT, ESP32 or relay integration — so these
+  // knobs govern the in-process adapter and the shape a future real adapter
+  // would have to honour.
+  devices: {
+    // Seconds an adapter call may take before it is treated as FAILED. The
+    // simulation adapter is synchronous and never reaches this, but the
+    // timeout is passed through the adapter contract so a real HTTP adapter
+    // inherits a bound rather than hanging the automation tick.
+    commandTimeoutSec: Number(process.env.DEVICE_COMMAND_TIMEOUT) || 5,
+    // Minimum seconds between two `device_failure` alerts for the SAME device.
+    // A device whose adapter keeps refusing is re-commanded on every engine
+    // tick, so without this one ongoing fault would produce an alert every
+    // tick and bury everything else. The failure is still recorded in full on
+    // every attempt (DeviceStateHistory with confirmed:false and an
+    // AutomationLog 'command_failed' row); only the duplicate ALERT is
+    // suppressed, and the suppression is logged.
+    failureAlertCooldownSec: Number(process.env.DEVICE_FAILURE_ALERT_COOLDOWN) || 300,
+  },
+
+  // Occupancy-driven automation (Review 3).
+  //
+  // NOTHING HERE ENABLES AUTOMATION. A rule must be explicitly enabled
+  // (AutomationRule.enabled defaults to false) AND the device must be in
+  // 'automatic' control mode (Device.controlMode defaults to 'disabled')
+  // before a single command is issued. These values are only the defaults
+  // offered when a rule is created.
+  automation: {
+    // How often the engine re-evaluates rules on its own, in seconds. The
+    // engine is primarily EVENT-DRIVEN (occupancyService calls it after each
+    // accepted report); this low-frequency tick exists so the unoccupied-delay
+    // and manual-override-expiry transitions still fire when no new occupancy
+    // report is arriving — which is exactly the case when a camera has gone
+    // dark, i.e. when being careful matters most.
+    tickIntervalSec: Number(process.env.AUTOMATION_TICK_INTERVAL) || 30,
+    // Minimum seconds between commands to the SAME device. With the
+    // already-in-the-desired-state check in services/automationRules.js, this
+    // is what stops a device being flapped on and off.
+    commandCooldownSec: Number(process.env.AUTOMATION_COMMAND_COOLDOWN) || 60,
+    // Default "how long must the room stay at/below the threshold before it
+    // counts as unoccupied", in seconds. Stops a short absence going dark.
+    defaultUnoccupiedForSec: Number(process.env.AUTOMATION_DEFAULT_UNOCCUPIED_FOR) || 300,
+    // Default lifetime of a manual override, in minutes. An override always
+    // carries its own explicit expiry timestamp; this is the default offered.
+    // Until it expires, automation records 'skipped_override' and issues no
+    // command, so an operator's action is never immediately undone.
+    manualOverrideMinutes: Number(process.env.AUTOMATION_MANUAL_OVERRIDE_MINUTES) || 30,
+    // Hard ceiling on the GET /api/automation/history page size.
+    historyMaxLimit: Number(process.env.AUTOMATION_HISTORY_MAX_LIMIT) || 500,
+    // Minimum seconds between two `automation_failure` alerts for the SAME
+    // room. The engine ticks continuously, so a persistent fault (a bad rule,
+    // a database hiccup) would otherwise raise one alert per tick. Every
+    // failure is still logged in full; only the duplicate alert is suppressed.
+    failureAlertCooldownSec: Number(process.env.AUTOMATION_FAILURE_ALERT_COOLDOWN) || 300,
+  },
+
+  // Energy analytics (Review 3).
+  energy: {
+    // THE DECLARED BASELINE, and the only reason a savings figure can be
+    // quoted at all. It represents "the device's configured operating schedule
+    // WITHOUT occupancy-based switching" — i.e. the hours per day the device
+    // would have been left on if nobody was automating it. Savings are
+    // baseline minus measured, clamped at zero.
+    //
+    // IT IS AN ASSUMPTION, NOT A MEASUREMENT, and it is deliberately an
+    // operator-set value rather than a hidden constant: change it to match the
+    // schedule you are actually comparing against, and quote it whenever you
+    // quote a saving. Every energy API response carries this number and a
+    // description of it for that reason.
+    baselineHoursPerDay: Number(process.env.ENERGY_BASELINE_HOURS_PER_DAY) || 12,
+    // Hard ceiling on energy history page size and on how many device-state
+    // transitions one window may pull, so no energy query is unbounded.
+    historyMaxLimit: Number(process.env.ENERGY_HISTORY_MAX_LIMIT) || 500,
+  },
 };
 
 export const isProduction = env.nodeEnv === 'production';

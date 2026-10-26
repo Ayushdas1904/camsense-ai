@@ -23,6 +23,14 @@ pass are redrawn for a short TTL so labels do not flicker.
 
 The MJPEG endpoint just reads each worker's latest frame — decoupled from event
 generation, so a dropped video viewer never stops detection/alerting.
+
+Review 3 adds OCCUPANCY on top of the SAME human detections Review 1 already
+produces — no second model, no extra pass, no new dependency. The worker keeps
+transient person tracks (``_person_track_for``) and the headcount is the number
+of distinct live tracks, so a person visible across consecutive frames is
+counted once. When the model is missing or the capture is failing the count is
+marked UNAVAILABLE and left at its last value rather than being zeroed, because
+"we cannot see" is not "the room is empty".
 """
 from __future__ import annotations
 
@@ -42,6 +50,12 @@ from app.services.pipeline import pipeline
 # Minimum IoU for two face boxes in consecutive recognition passes to be
 # treated as the same short-lived track.
 _TRACK_IOU = 0.3
+
+# Minimum IoU for two PERSON boxes in consecutive processed frames to be
+# treated as the same person. Same value and same greedy-IoU association as
+# the face tracker above — a person box moves less between frames than a face
+# box does between recognition passes, so 0.3 is if anything generous here.
+_PERSON_TRACK_IOU = 0.3
 
 
 class _CameraWorker:
@@ -80,6 +94,27 @@ class _CameraWorker:
         self._latest_recognitions: list[FaceRecognitionResult] = []
         self._recognitions_until = 0.0
 
+        # ── Review 3 · occupancy ────────────────────────────────
+        # Transient PERSON tracks, the same idea as the face tracks above but
+        # driven by the `human` detections YOLO already produces on every
+        # processed frame. See _person_track_for and _update_occupancy.
+        self._person_tracks: list[dict] = []
+        self._person_track_seq = 0
+        self._person_pass = 0
+        #: Last measured headcount: the number of DISTINCT live person tracks,
+        #: NOT a sum of per-frame detections and NOT a running total. None
+        #: until occupancy has been measured at least once.
+        self.occupancy_count: int | None = None
+        #: When that measurement was taken. Monotonic for age arithmetic that
+        #: a clock adjustment cannot corrupt; wall clock for display.
+        self.occupancy_updated_at: float | None = None
+        self.occupancy_updated_wall: float | None = None
+        #: Whether the headcount can be TRUSTED right now. False when the YOLO
+        #: model is unavailable or the capture is failing. When False,
+        #: occupancy_count keeps its LAST value — it is never zeroed, because
+        #: "we could not look" is not "the room is empty".
+        self.occupancy_available: bool = False
+
     @staticmethod
     def _resolve_source(source: str | None, mode: str):
         settings = get_settings()
@@ -112,6 +147,18 @@ class _CameraWorker:
     def running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
+    @property
+    def occupancy_age_seconds(self) -> float | None:
+        """Seconds since the headcount was last measured, or None if never.
+
+        Monotonic-based, so a system clock adjustment cannot make a stale
+        reading look fresh. The consumer uses this to decide staleness; the
+        backend applies its own independent staleness window on top.
+        """
+        if self.occupancy_updated_at is None:
+            return None
+        return max(0.0, time.monotonic() - self.occupancy_updated_at)
+
     def latest_jpeg(self) -> bytes | None:
         with self._lock:
             return self._latest_jpeg
@@ -129,6 +176,19 @@ class _CameraWorker:
                 if self.mode == "demo":
                     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                     continue
+                # The capture is failing, so no honest headcount can be made.
+                # occupancy_count is deliberately LEFT ALONE rather than zeroed:
+                # a camera we cannot read is not an empty room, and reporting 0
+                # here would make a full room look evacuated. The consumer sees
+                # available=False plus an ageing timestamp instead.
+                self.occupancy_available = False
+                if settings.occupancy_enabled:
+                    try:
+                        reporter.report_occupancy(
+                            self.camera_id, self.occupancy_count, False, self.mode
+                        )
+                    except Exception as exc:  # noqa: BLE001 - never stop the retry loop
+                        print(f"[stream:{self.camera_id}] occupancy report failed: {exc}")
                 time.sleep(0.5)
                 cap.open(self._source)
                 continue
@@ -175,11 +235,36 @@ class _CameraWorker:
 
             pipeline.annotate(frame, detections, self._overlay_recognitions())
             self._update_stats(now, detections, recognitions, recognition_due)
+            # Occupancy is ADDITIVE to Review 1, so it is guarded the same way
+            # face detection and recognition are: a fault here marks the
+            # headcount unavailable and is logged, while YOLO detection, the
+            # MJPEG stream and detection reporting carry on. An unguarded
+            # exception in this block would kill the whole camera thread and
+            # take Review 1 monitoring down with it.
+            try:
+                self._update_occupancy(detections, settings)
+            except Exception as exc:  # noqa: BLE001 - occupancy must never stop detection
+                # Unavailable, NOT zero — see _update_occupancy's docstring.
+                self.occupancy_available = False
+                print(f"[stream:{self.camera_id}] occupancy update failed: {exc}")
             self._encode(frame)
 
             reporter.report(self.camera_id, detections, frame, self.mode)
             if recognitions:
                 reporter.report_recognition(self.camera_id, recognitions, frame, self.mode)
+            if settings.occupancy_enabled:
+                # No frame and no image is passed: a headcount needs no
+                # snapshot, and sending one would put people's faces on a leg
+                # that has no reason to carry them.
+                try:
+                    reporter.report_occupancy(
+                        self.camera_id,
+                        self.occupancy_count,
+                        self.occupancy_available,
+                        self.mode,
+                    )
+                except Exception as exc:  # noqa: BLE001 - reporting must never stop detection
+                    print(f"[stream:{self.camera_id}] occupancy report failed: {exc}")
 
         cap.release()
 
@@ -249,6 +334,104 @@ class _CameraWorker:
         )
         return track_id
 
+    # ── Review 3 · occupancy estimation ────────────────────────
+
+    def _person_track_for(self, bbox) -> dict:
+        """Associate one person box with a live track, or open a new one.
+
+        Exactly the approach ``_track_for`` uses for faces — greedy bbox-IoU
+        against the previous pass, one claim per track per pass, TTL expiry —
+        applied to the ``human`` detections YOLO already produces on every
+        processed frame. No extra model and no new dependency.
+
+        Like the face tracker, this is a SHORT-LIVED SESSION HANDLE and makes
+        NO claim about who the person is. It also does not survive across
+        cameras: there is no cross-camera re-identification in this project, so
+        the same person walking from one camera to another legitimately opens a
+        new track on the second camera.
+        """
+        now = time.time()
+        best, best_iou = None, 0.0
+        for track in self._person_tracks:
+            if track.get("pass") == self._person_pass:
+                continue  # already claimed by another box in this same frame
+            iou = face_service.bbox_iou(bbox, track["bbox"])
+            if iou > best_iou:
+                best, best_iou = track, iou
+
+        if best is not None and best_iou >= _PERSON_TRACK_IOU:
+            best["bbox"] = list(bbox)
+            best["ts"] = now
+            best["pass"] = self._person_pass
+            best["hits"] = int(best.get("hits", 0)) + 1
+            return best
+
+        self._person_track_seq += 1
+        track = {
+            "id": f"{self.camera_id}-person-{self._person_track_seq}",
+            "bbox": list(bbox),
+            "ts": now,
+            "pass": self._person_pass,
+            "hits": 1,
+        }
+        self._person_tracks.append(track)
+        return track
+
+    def _update_occupancy(self, detections: list[Detection], settings) -> None:
+        """Recompute the headcount from this frame's human detections.
+
+        THE COUNTING RULE, which the whole feature rests on: occupancy is the
+        number of DISTINCT LIVE PERSON TRACKS. It is NOT the sum of per-frame
+        detections and NOT a running total, so one person standing in view
+        across a hundred consecutive frames is counted ONCE, not a hundred
+        times. Each frame's boxes are associated with the existing tracks by
+        IoU first; only a box that matches nothing opens a new track.
+
+        A track must also have been seen ``occupancy_min_track_hits`` times
+        before it counts, so a single-frame false positive cannot move the
+        number.
+
+        Honesty rule: when the YOLO model is not loaded there is no detection
+        to count, so ``occupancy_available`` goes False and the last count is
+        LEFT IN PLACE rather than being reset to 0. Zero means "nobody is
+        there"; unavailable means "we cannot tell", and conflating them would
+        report an empty room whenever the model is missing.
+        """
+        if not settings.occupancy_enabled:
+            return
+
+        if not YoloModel.instance().available:
+            # No real human detection is happening — so there is no headcount.
+            # Do NOT touch occupancy_count (see the docstring).
+            self.occupancy_available = False
+            return
+
+        ttl = float(settings.occupancy_track_ttl)
+        min_hits = max(1, int(settings.occupancy_min_track_hits))
+        now = time.time()
+
+        self._person_pass += 1
+        # Expire tracks that have not been re-seen inside the TTL before
+        # matching, so a person who has left stops being counted.
+        self._person_tracks = [t for t in self._person_tracks if now - t["ts"] <= ttl]
+
+        for det in detections:
+            # Only REAL human detections feed the headcount. A demo-injected
+            # weapon (source='demo') is not a person, and a face box is a
+            # different measurement entirely.
+            if det.type != "human":
+                continue
+            if not det.bbox or len(det.bbox) < 4:
+                continue
+            self._person_track_for(det.bbox)
+
+        self.occupancy_count = sum(
+            1 for t in self._person_tracks if int(t.get("hits", 0)) >= min_hits
+        )
+        self.occupancy_updated_at = time.monotonic()
+        self.occupancy_updated_wall = now
+        self.occupancy_available = True
+
     def _maybe_add_demo_weapon(self, detections: list[Detection], frame) -> list[Detection]:
         if time.time() >= self._demo_weapon_until:
             return detections
@@ -267,6 +450,11 @@ class _CameraWorker:
     def _update_stats(self, now: float, detections: list[Detection],
                       recognitions: list[FaceRecognitionResult] | None = None,
                       recognition_due: bool = True) -> None:
+        # `people` is the number of human boxes IN THIS FRAME — the Review 1
+        # statistic, unchanged. It is NOT the occupancy figure: occupancy is
+        # the number of distinct live person TRACKS (see _update_occupancy), so
+        # one person standing in view keeps `people` at 1 per frame and
+        # contributes exactly 1 to occupancy rather than one per frame.
         self.people = sum(1 for d in detections if d.type == "human")
         self.weapons = sum(1 for d in detections if d.type == "weapon")
         # Face and identity counters only change on frames where face

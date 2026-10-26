@@ -9,7 +9,10 @@
     "dev": "nodemon src/server.js",
     "seed": "node src/utils/seedAdmin.js",
     "seed:cameras": "node src/utils/seedCameras.js",
+    "seed:rooms": "node src/utils/seedRooms.js",
+    "seed:devices": "node src/utils/seedDevices.js",
     "dedupe:attendance": "node src/utils/dedupeAttendance.js",
+    "demo:reset": "node src/utils/resetDemoData.js",
     "test": "node --test test/"
   },
   "engines": {

@@ -7,7 +7,9 @@ user JWT (this is service-to-service traffic).
 
 Review 2 adds a second, independently rate-limited leg for recognition
 results. The two legs use separate limiters and separate timestamps so neither
-can starve the other.
+can starve the other. Review 3 adds a THIRD leg for occupancy, on the same
+pattern: its own limiter, its own interval, its own in-flight accounting — and
+no image payload at all, because a headcount needs no snapshot.
 
 THREADING: the HTTP POSTs are dispatched on short-lived background threads.
 The caller is a camera worker that also runs YOLO on every frame, so a backend
@@ -56,6 +58,10 @@ class EventReporter:
     def __init__(self) -> None:
         self._last_sent: dict[str, float] = {}
         self._last_recognition_sent: dict[str, float] = {}
+        # Review 3 occupancy leg: its own limiter, plus the last count actually
+        # DELIVERED per camera so a change can bypass the interval.
+        self._last_occupancy_sent: dict[str, float] = {}
+        self._last_occupancy_value: dict[str, tuple[int | None, bool]] = {}
         self._lock = threading.Lock()
         # None = never attempted, True = last POST succeeded, False = last POST
         # failed OR a report was dropped without being delivered at all.
@@ -277,6 +283,87 @@ class EventReporter:
             # Backend down must never crash video processing.
             self.recognition_leg_ok = False
             print(f"[reporter] recognition report failed: {exc}")
+
+    # ── Review 3 · occupancy leg ───────────────────────────────
+
+    def report_occupancy(
+        self,
+        camera_id: str,
+        count: int | None,
+        available: bool,
+        frame_mode: str,
+    ) -> None:
+        """POST the current headcount to the backend (third, separate leg).
+
+        Its own limiter and its own interval, so occupancy cannot starve — or
+        be starved by — detection or recognition reporting.
+
+        TWO DELIBERATE PROPERTIES:
+
+        1. SEND ON CHANGE. The interval is a floor for UNCHANGED reports only.
+           If the count (or the availability flag) differs from what was last
+           delivered for this camera, the interval is bypassed, so a real
+           transition — a room emptying, a camera going dark — reaches the
+           backend immediately instead of up to one interval later.
+
+        2. NO IMAGE, EVER. A headcount needs no evidence snapshot, so none is
+           attached. Occupancy is the one leg that carries no pixels at all,
+           which also means it cannot leak a face onto a payload that has no
+           reason to hold one.
+
+        ``available=False`` is REPORTED, not suppressed: the backend has to
+        learn that the figure can no longer be trusted, otherwise it would keep
+        treating the last count as current. ``count`` is passed through
+        unchanged in that case (it is the last known value, possibly None) —
+        this service never substitutes 0 for "unknown", and the backend's own
+        rules decide what to show.
+        """
+        settings = get_settings()
+        if not settings.occupancy_enabled:
+            return
+
+        now = time.time()
+        current = (count, bool(available))
+        with self._lock:
+            previous = self._last_occupancy_value.get(camera_id)
+            changed = previous is None or previous != current
+            last = self._last_occupancy_sent.get(camera_id, 0)
+            if not changed and now - last < settings.occupancy_report_interval:
+                return
+            self._last_occupancy_sent[camera_id] = now
+            self._last_occupancy_value[camera_id] = current
+
+        payload = {
+            "cameraId": camera_id,
+            "mode": frame_mode,
+            # None when the count has never been measured. Sent as null rather
+            # than 0 so the backend cannot mistake it for an empty room.
+            "count": count,
+            "available": bool(available),
+        }
+        if not self._dispatch("occupancy", camera_id, self._post_occupancy, payload):
+            # Nothing was delivered, so do not record this as the last reported
+            # state — otherwise the next genuine change could be compared
+            # against a value the backend never received and be suppressed.
+            with self._lock:
+                self._last_occupancy_sent.pop(camera_id, None)
+                if previous is None:
+                    self._last_occupancy_value.pop(camera_id, None)
+                else:
+                    self._last_occupancy_value[camera_id] = previous
+
+    def _post_occupancy(self, payload: dict) -> None:
+        settings = get_settings()
+        try:
+            requests.post(
+                f"{settings.backend_url}/api/ai/occupancy",
+                json=payload,
+                headers={"x-ai-secret": settings.ingest_secret},
+                timeout=float(settings.report_timeout),
+            )
+        except requests.RequestException as exc:
+            # Backend down must never crash video processing.
+            print(f"[reporter] occupancy report failed: {exc}")
 
     @staticmethod
     def _encode_snapshot(frame, detections: list[Detection]) -> str | None:
