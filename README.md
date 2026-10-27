@@ -30,7 +30,8 @@ simulated adapter, transparent energy analytics, and the integrated dashboard.
 > | `cd frontend && npm run lint` | clean (no output) |
 > | `cd frontend && npm run build` | succeeded — 2499 modules, ~1.9 s, with an advisory chunk-size warning |
 > | `cd ai-service && python -m compileall app` | clean |
-> | `cd ai-service && python -m unittest discover -s tests -v` | 91 tests collected; last observed run **90 pass / 1 fail**. The failure (`test_failed_refresh_keeps_previous_identities_and_records_the_error`) has since been fixed, but **the re-run has not been observed**, so this is not reported as 91/91 |
+> | `cd ai-service && python -m unittest discover -s tests -b` | **91 tests, 91 pass, 0 fail** in ~2.1 s. The earlier failure (`test_failed_refresh_keeps_previous_identities_and_records_the_error`) is fixed and confirmed passing. Run inside the activated `.venv`, so nothing was skipped |
+> | `ai-service/tests/test_review3_occupancy.py` (part of the 91) | passes, including `test_one_person_across_many_consecutive_frames_is_counted_once` — the rule the occupancy feature rests on: one person visible across 100 consecutive frames counts **1**, not 100 |
 > | All four processes started; `GET /api/health` on 5050 and 8000 | both answered `ok` |
 >
 > What is **still** unverified: **no end-to-end camera, recognition,
@@ -419,7 +420,7 @@ Every script below exists in the relevant `package.json`.
 |---|---|
 | `python download_assets.py` | fetches the four model/sample files; idempotent |
 | `uvicorn app.main:app --reload` | starts the service on 8000 |
-| `python -m unittest discover -s tests -v` | the stdlib test suite |
+| `python -m unittest discover -s tests -b` | the stdlib test suite (`-b` buffers the tests' own `print()` output; use `-v` instead to list each test name) |
 | `python -m compileall app` | byte-compile check |
 
 ---
@@ -431,7 +432,7 @@ cd backend     && npm test
 cd frontend    && npm run lint
 cd frontend    && npm run build
 cd ai-service  && source .venv/bin/activate && python -m compileall app
-cd ai-service  && source .venv/bin/activate && python -m unittest discover -s tests -v
+cd ai-service  && source .venv/bin/activate && python -m unittest discover -s tests -b
 ```
 
 | Command | Last observed result |
@@ -440,12 +441,20 @@ cd ai-service  && source .venv/bin/activate && python -m unittest discover -s te
 | `frontend` → `npm run lint` | clean, no output |
 | `frontend` → `npm run build` | succeeded — 2499 modules, ~1.9 s. Emits an advisory *"chunk exceeds 500 kB"* **warning**, which is not an error |
 | `ai-service` → `python -m compileall app` | clean |
-| `ai-service` → `python -m unittest discover -s tests -v` | 91 tests collected; last observed **90 pass / 1 fail**. The one failure has since been fixed, but **that re-run has not been observed**, so this is not 91/91 |
+| `ai-service` → `python -m unittest discover -s tests -b` | **91 tests, 91 pass, 0 fail** in ~2.1 s. The one earlier failure is fixed and confirmed passing on a re-run |
+| `ai-service/tests/test_review3_occupancy.py` (part of the 91) | passes. Includes `test_one_person_across_many_consecutive_frames_is_counted_once`, which asserts that the same person fed through 100 consecutive frames yields an occupancy count of **1**, and `test_an_unavailable_model_reports_unavailable_and_does_not_zero_the_count`, which asserts an unavailable model does **not** report an empty room |
 
 The backend and AI-service suites need **no MongoDB, no running service and no
 model weights**, because the decision rules are deliberately factored into
 dependency-free modules and the AI-service tests mock `YoloModel`. If the AI
 suite reports skipped tests, your virtualenv is not activated.
+
+Use `-b` rather than `-v` when piping the AI suite through something like
+`| tail -5`. Without `-b` the tests' own `print()` output is block-buffered and
+flushes *after* unittest's stderr summary, so the tail shows
+`[face-cache] refresh failed: backend unreachable` instead of the result. Those
+`[face-cache]` lines are expected output from a test that deliberately
+simulates an unreachable backend, not a problem.
 
 **What these results do not cover:** no end-to-end camera, recognition,
 attendance, occupancy, device or energy workflow has been exercised through the
@@ -523,7 +532,7 @@ attendance record or a review-this-face alert.
 > **Honesty note, up front.** Everything in this section describes code that
 > exists and was statically verified against the sources it calls. The
 > **unit-level rules have since been executed** — the backend suite runs
-> 192/192 and the AI-service suite runs (see *Tests and builds* above) — but
+> 192/192 and the AI-service suite runs 91/91 (see *Tests and builds* above) — but
 > **no identity workflow has been exercised through the UI**: no face has been
 > enrolled, matched or turned into an attendance record on a running system
 > here. No accuracy figure is claimed anywhere, because no evaluation was
@@ -851,7 +860,7 @@ The setup above is unchanged — Review 2 adds exactly two things to it:
 
 No new npm package and no new pip package is required. Backend tests run with
 `cd backend && npm test`; AI-service tests with
-`cd ai-service && python -m unittest discover -s tests -v`. Both have now been
+`cd ai-service && python -m unittest discover -s tests -b`. Both have now been
 run — the recorded results are in *Tests and builds* near the top of this
 README; `docs/REVIEW2-REPORT.md` §11 records the earlier state, when neither had
 been executed.
@@ -1530,8 +1539,11 @@ factored into dependency-free modules and the AI-service test mocks `YoloModel`.
 > builds — with the results actually recorded* near the top of this README:
 > backend 192/192, frontend lint clean, frontend build succeeding with an
 > advisory chunk-size warning, `compileall` clean, and the AI-service suite at
-> 90 pass / 1 fail on its last observed run with the fix for that one failure
-> applied but **not yet re-confirmed**. [`docs/REVIEW3-REPORT.md`](docs/REVIEW3-REPORT.md)
+> **91 tests, 91 pass, 0 fail** — including
+> `test_one_person_across_many_consecutive_frames_is_counted_once`, which pins
+> the one property occupancy depends on: a person visible across many
+> consecutive frames is counted once, not once per frame.
+> [`docs/REVIEW3-REPORT.md`](docs/REVIEW3-REPORT.md)
 > §D and [`docs/REVIEW3-VERIFICATION.md`](docs/REVIEW3-VERIFICATION.md) record
 > the earlier state, when every one of these commands was blocked at the OS
 > sandbox layer with `sandbox-exec: sandbox_apply: Operation not permitted`,
@@ -1645,8 +1657,8 @@ Before the demo:
 During the demo, say out loud:
 
 - [ ] The automated suites **have** been run (backend 192/192; frontend lint and
-      build clean; AI-service suite last observed 90/91 with the fix pending
-      re-confirmation) — but **no workflow has been exercised through the UI**,
+      build clean; AI-service suite 91/91) — but **no workflow has been
+      exercised through the UI**,
       so nothing on screen is a verified result
 - [ ] `yolov8n` (COCO) **has no firearm class** — the demo weapon button is
       clearly labelled DEMO for exactly that reason
@@ -1826,7 +1838,7 @@ before quoting anything this project reports.
 
 | Area | The limitation |
 |---|---|
-| Verification | The automated suites run (see *Tests and builds*), but **no workflow has been exercised through the UI**. The AI-service suite's last observed run was 90/91 with the fix not yet re-confirmed. |
+| Verification | The automated suites run (see *Tests and builds*) — backend 192/192 and AI service 91/91 — but **no workflow has been exercised through the UI**. |
 | Weapon detection | `yolov8n` (COCO) detects knife/scissors but **has no firearm class**. The demo-weapon button injects a clearly labelled DEMO event. |
 | Recognition accuracy | The `0.363` threshold is OpenCV's published starting point, **uncalibrated** here. A cosine similarity is **not a probability**. No liveness or anti-spoofing check exists. |
 | Occupancy | Greedy bbox-IoU association, not a real multi-object tracker — two people crossing will mis-associate. No cross-camera re-identification, so multi-camera rooms aggregate with **MAX, never a sum**. Tracks do not survive a restart. |
