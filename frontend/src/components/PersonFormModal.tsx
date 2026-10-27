@@ -31,7 +31,17 @@ const categoryOptions = (Object.keys(personCategoryLabel) as PersonCategory[]).m
   label: personCategoryLabel[value],
 }));
 
-type FieldErrors = Partial<Record<'personId' | 'name' | 'email', string>>;
+/** The only three fields that can carry an inline error. */
+type ErrorField = 'personId' | 'name' | 'email';
+
+type FieldErrors = Partial<Record<ErrorField, string>>;
+
+/**
+ * Narrows the declared type of a key, not just its value, so the errors object
+ * can be indexed by it without a cast.
+ */
+const isErrorField = (key: PropertyKey): key is ErrorField =>
+  key === 'personId' || key === 'name' || key === 'email';
 
 /** Deliberately permissive: a shape check, not an attempt to out-validate RFC 5322. */
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -100,7 +110,7 @@ export function PersonFormModal({
   const set = <K extends keyof PersonInput>(key: K, value: PersonInput[K]) => {
     setForm((f) => ({ ...f, [key]: value }));
     // Clear only the three fields that can carry an inline error.
-    if (key === 'personId' || key === 'name' || key === 'email') {
+    if (isErrorField(key)) {
       setErrors((e) => {
         const next = { ...e };
         delete next[key];

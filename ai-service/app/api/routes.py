@@ -98,7 +98,13 @@ def stream_stats(camera_id: str) -> StreamStats:
         return StreamStats(camera_id=camera_id, running=False,
                            mode=get_settings().detection_mode,
                            model_loaded=YoloModel.instance().available,
-                           recognition_available=face_service.recognition_available())
+                           recognition_available=face_service.recognition_available(),
+                           # Nothing is being processed, so there is no
+                           # headcount. Reported as unavailable with a null
+                           # count — NEVER as an empty room.
+                           occupancy=None,
+                           occupancy_available=False,
+                           occupancy_age_seconds=None)
     return StreamStats(
         camera_id=camera_id,
         running=worker.running,
@@ -117,6 +123,14 @@ def stream_stats(camera_id: str) -> StreamStats:
         # rather than only logged, so a silently-dropped sighting is visible.
         recognition_reports_dropped=reporter.dropped_reports("recognition", camera_id),
         detection_reports_dropped=reporter.dropped_reports("detection", camera_id),
+        # ── Review 3 · occupancy ──
+        # Distinct live person tracks, not a sum of per-frame detections. The
+        # availability flag and the age are reported alongside it so a consumer
+        # can tell a measured 0 from a figure it must not trust.
+        occupancy=worker.occupancy_count,
+        occupancy_available=worker.occupancy_available,
+        occupancy_age_seconds=worker.occupancy_age_seconds,
+        occupancy_reports_dropped=reporter.dropped_reports("occupancy", camera_id),
     )
 
 

@@ -75,6 +75,21 @@ class StreamStats(_Base):
     recognition_reports_dropped: int = 0
     #: Detection reports discarded the same way (Review 1 leg).
     detection_reports_dropped: int = 0
+    # ── Review 3 · occupancy ──
+    #: Distinct live PERSON TRACKS currently counted for this camera — not a
+    #: sum of per-frame detections. `None` when occupancy has never been
+    #: measured on this worker. Deliberately nullable: a count of 0 means "we
+    #: looked and nobody is there", which is a different statement from "we
+    #: could not look", and the two must not collapse into the same number.
+    occupancy: int | None = None
+    #: False when the YOLO model is unavailable or the capture is failing. When
+    #: this is False, `occupancy` is the LAST KNOWN value and must be presented
+    #: as stale/unavailable — never as an empty room.
+    occupancy_available: bool = False
+    #: Seconds since the occupancy figure was last measured, or None if never.
+    occupancy_age_seconds: float | None = None
+    #: Occupancy reports discarded by the reporter's in-flight cap.
+    occupancy_reports_dropped: int = 0
 
 
 class HealthResponse(_Base):

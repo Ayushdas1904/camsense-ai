@@ -108,7 +108,53 @@ test('the face-registration route exists and is admin-gated and validated', () =
   assert.match(match[1], /validate\(faceRegistrationSchema\)/);
 });
 
-test('the Review 2 routers are mounted and the Review 3 placeholders are not', () => {
+test('the occupancy router exposes GET only — no client-facing headcount write', () => {
+  const methods = routerMethods(routeLines(read('occupancyRoutes.js')));
+
+  assert.ok(methods.length > 0, 'the occupancy router must register routes');
+  assert.deepEqual([...new Set(methods)], ['get']);
+  assert.equal(methods.includes('post'), false);
+  assert.equal(methods.includes('put'), false);
+  assert.equal(methods.includes('patch'), false);
+  assert.equal(methods.includes('delete'), false);
+});
+
+test('the occupancy ingest is shared-secret gated and is the only occupancy write', () => {
+  const source = routeLines(read('aiRoutes.js'));
+
+  assert.match(source, /router\.post\(\s*'\/occupancy',\s*requireInternalSecret/);
+  // Not reachable with a browser JWT — occupancy is AI-produced data.
+  assert.equal(/'\/occupancy',\s*requireAuth/.test(source), false);
+
+  // And no other route file registers an occupancy write.
+  for (const file of ['occupancyRoutes.js', 'roomRoutes.js']) {
+    const other = routeLines(read(file));
+    assert.equal(
+      /router\.(post|put|patch|delete)\s*\(\s*['"][^'"]*occupancy/i.test(other),
+      false,
+      `${file} must not register an occupancy write`
+    );
+  }
+});
+
+test('every mutating room route requires the admin role as well as auth', () => {
+  const source = read('roomRoutes.js');
+  const mutations = [
+    ...source.matchAll(/router\.(post|put|patch|delete)\s*\(([\s\S]*?)\);/g),
+  ];
+
+  assert.ok(mutations.length >= 3, 'expected the room create/update/delete routes');
+  for (const [, method, body] of mutations) {
+    assert.match(body, /requireAuth/, `${method} room route must require auth`);
+    assert.match(
+      body,
+      /requireRole\('admin'\)/,
+      `${method} room route must require the admin role`
+    );
+  }
+});
+
+test('the Review 2 routers are mounted, and so are the Review 3 routers', () => {
   const source = read('index.js');
   const active = routeLines(source);
 
@@ -116,12 +162,23 @@ test('the Review 2 routers are mounted and the Review 3 placeholders are not', (
   assert.match(active, /router\.use\('\/attendance', attendanceRoutes\)/);
   assert.match(active, /router\.use\('\/recognition-events', recognitionEventRoutes\)/);
 
-  // Review 3 must stay unimplemented.
-  for (const mount of ['occupancy', 'energy', 'analytics']) {
+  // Review 3 occupancy IS implemented now (it was a commented placeholder
+  // through Review 2), so these mounts must be live.
+  assert.match(active, /router\.use\('\/rooms', roomRoutes\)/);
+  assert.match(active, /router\.use\('\/occupancy', occupancyRoutes\)/);
+
+  // Review 3 devices, automation and energy are implemented too. /energy was
+  // a commented placeholder until this feature mounted it.
+  assert.match(active, /router\.use\('\/devices', deviceRoutes\)/);
+  assert.match(active, /router\.use\('\/automation', automationRoutes\)/);
+  assert.match(active, /router\.use\('\/energy', energyRoutes\)/);
+
+  // The remaining placeholders are still unimplemented.
+  for (const mount of ['analytics', 'notifications']) {
     assert.equal(
       new RegExp(`^router\\.use\\('/${mount}'`, 'm').test(active),
       false,
-      `/${mount} must remain commented out (Review 3)`
+      `/${mount} must remain commented out until it is implemented`
     );
   }
 

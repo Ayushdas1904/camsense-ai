@@ -1,6 +1,7 @@
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ingestDetections } from '../services/eventService.js';
 import { ingestRecognition } from '../services/recognitionService.js';
+import { ingestOccupancy } from '../services/occupancyService.js';
 import { listEnabledEmbeddings } from '../services/personService.js';
 import { aiClient } from '../services/aiClient.js';
 import { emit, SocketEvents } from '../sockets/index.js';
@@ -27,6 +28,26 @@ export const ingest = asyncHandler(async (req, res) => {
  */
 export const ingestRecognitionResults = asyncHandler(async (req, res) => {
   const result = await ingestRecognition(req.body);
+  res.json({ success: true, data: result });
+});
+
+/**
+ * Occupancy ingest (Review 3), called by the AI service only
+ * (service-to-service, shared secret).
+ *
+ * THIS IS THE ONLY WRITE PATH FOR OCCUPANCY DATA. There is no client-facing
+ * equivalent — no POST /api/occupancy — by design, exactly as with recognition
+ * and attendance: a headcount is AI-produced data, and an authenticated
+ * browser client must not be able to assert one.
+ *
+ * The service it delegates to re-checks the camera against this backend's own
+ * records and applies this backend's own staleness and capacity rules rather
+ * than trusting the AI service's interpretation. A report that says the figure
+ * is unavailable is RECORDED as unavailable with a null count — never as zero
+ * occupants.
+ */
+export const ingestOccupancyReport = asyncHandler(async (req, res) => {
+  const result = await ingestOccupancy(req.body);
   res.json({ success: true, data: result });
 });
 

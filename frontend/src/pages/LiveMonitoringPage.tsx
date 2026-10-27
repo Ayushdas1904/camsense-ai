@@ -9,6 +9,7 @@ import {
   Cctv,
   ScanFace,
   UserCheck,
+  DoorOpen,
 } from 'lucide-react';
 import {
   PageHeader,
@@ -317,6 +318,8 @@ export function LiveMonitoringPage() {
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="w-64">
                   <Select
+                    label="Camera"
+                    name="liveCamera"
                     value={selectedId}
                     onChange={(e) => handleSelect(e.target.value)}
                     options={cameras.map((c) => ({ value: c._id, label: `${c.name} (${c.cameraId})` }))}
@@ -533,7 +536,31 @@ export function LiveMonitoringPage() {
                 label="Known faces"
                 value={running ? String(stats?.known_faces ?? 0) : '—'}
               />
+              {/*
+                Review 3 occupancy, relayed straight from the AI service's
+                stream stats. DISTINCT from "People" above: that is the number
+                of human boxes in the current frame, while this is the number
+                of distinct tracked people — one person across many frames
+                counts once. An em-dash is shown when the worker reports the
+                figure as unavailable, never a 0.
+              */}
+              <Metric
+                icon={<DoorOpen className="h-4 w-4" />}
+                label="Occupancy (distinct)"
+                value={
+                  running && stats?.occupancy_available && stats?.occupancy != null
+                    ? String(stats.occupancy)
+                    : '—'
+                }
+              />
             </CardBody>
+            {running && stats && stats.occupancy_available === false && (
+              <div className="border-t border-border px-5 py-3 text-xs text-warning">
+                The occupancy figure is currently unavailable (no detection model, or frames are
+                not being read). It is shown as “—”, not as 0 — an unreadable source is not an
+                empty room.
+              </div>
+            )}
           </Card>
 
           <Card>

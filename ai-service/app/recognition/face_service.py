@@ -639,8 +639,12 @@ def refresh_identity_cache(force: bool = True) -> dict:
     """
     embedder = FaceEmbedderModel.instance()
     if not force:
-        # Honour the TTL; report whether anything was installed.
-        installed = embedding_cache.ensure_fresh(
+        # Honour the TTL; report whether anything was installed. This asks
+        # ``try_refresh``, not ``ensure_fresh``: the latter reports whether an
+        # identity set is loaded at all, which stays True inside the TTL when
+        # no fetch ran and after a refresh that failed — both of which would be
+        # reported here as a successful refresh.
+        installed = embedding_cache.try_refresh(
             expected_dim=int(embedder.embedding_dim),
             expected_model=embedder.model_name,
             force=False,

@@ -32,4 +32,10 @@ export const SocketEvents = {
   IDENTITY_UNKNOWN: 'identity:unknown',
   ATTENDANCE_MARKED: 'attendance:marked',
   RECOGNITION_STATUS: 'recognition:status',
+  // Review 3 · occupancy / devices / automation / energy.
+  OCCUPANCY_UPDATE: 'occupancy:update',
+  ROOM_STATUS: 'room:status',
+  DEVICE_STATE: 'device:state',
+  AUTOMATION_ACTION: 'automation:action',
+  ENERGY_UPDATE: 'energy:update',
 } as const;

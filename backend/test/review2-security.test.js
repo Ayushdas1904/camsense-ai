@@ -132,9 +132,13 @@ test('the unique attendance index is built and verified at startup', () => {
   // createIndexes, NOT syncIndexes: syncIndexes also DROPS any index the
   // schema does not declare, which would remove an operator's out-of-band
   // reporting or retention index on the next start.
+  //
+  // The pattern matches an actual CALL (`.syncIndexes()`), not the bare word:
+  // db.js explains in prose why syncIndexes() is not used, and a comment
+  // naming the method it deliberately avoids is not a use of it.
   assert.match(db, /Attendance\.createIndexes\(\)/);
   assert.equal(
-    /syncIndexes\(\)/.test(db),
+    /\.syncIndexes\(\)/.test(db),
     false,
     'syncIndexes drops indexes it did not declare — use createIndexes'
   );
@@ -162,8 +166,67 @@ test('an unverified index disables attendance writes, not the whole backend', ()
 
   // And the attendance path must then refuse to write, because the unique
   // index IS the duplicate-prevention mechanism.
-  assert.match(service, /attendanceDuplicatePreventionReady\(getAttendanceIndexState\(\)\)/);
+  //
+  // Asserted as PROPERTIES, not as one exact spelling. The guard may bind the
+  // state to a variable first (attendanceService.js does, so the refusal can
+  // quote `indexState.error` back to the caller, which a nested call could
+  // not), rename that variable, or wrap the condition across lines. All three
+  // are the same guard, so none of them should fail this test. What must not
+  // change is that the state is READ, that it GATES the write, and that the
+  // refusal is an early return carrying the reason.
+  assert.match(
+    service,
+    /getAttendanceIndexState\s*\(/,
+    'attendanceService must read the index state startup recorded'
+  );
+
+  // The gate itself: the readiness check is negated inside an `if`, so it
+  // decides something. A bare call whose result is discarded gates nothing.
+  const gate = service.match(
+    /if\s*\(\s*!\s*attendanceDuplicatePreventionReady\s*\(\s*([^)]*?)\s*\)/
+  );
+  assert.ok(
+    gate,
+    'the write must be gated by !attendanceDuplicatePreventionReady(...), not merely mention it'
+  );
+
+  // ...and what it is gated ON is the index state: either passed inline, or
+  // bound to a variable (under any name) from getAttendanceIndexState().
+  const gateArgument = gate[1];
+  const gatedOnIndexState =
+    /getAttendanceIndexState\s*\(/.test(gateArgument) ||
+    (/^[A-Za-z_$][\w$]*$/.test(gateArgument) &&
+      new RegExp(
+        `(?:const|let|var)\\s+${gateArgument}\\s*=\\s*(?:await\\s+)?getAttendanceIndexState\\s*\\(`
+      ).test(service));
+  assert.ok(
+    gatedOnIndexState,
+    `the guard must be fed by getAttendanceIndexState(), got \`${gateArgument}\``
+  );
+
+  // The refusal is an EARLY RETURN carrying the reason, so attendance writes
+  // stop while the process keeps running. Not a throw, and not an exit.
   assert.match(service, /rejected: 'duplicate_prevention_unverified'/);
+  assert.match(
+    service,
+    /return\s*\{[^}]*rejected:\s*'duplicate_prevention_unverified'/,
+    'the refusal must be returned to the caller, not thrown'
+  );
+  const refusalIndex = service.indexOf("rejected: 'duplicate_prevention_unverified'");
+  assert.ok(
+    refusalIndex > gate.index,
+    'the refusal must be inside the guard it belongs to, not before it'
+  );
+  assert.equal(
+    /\bthrow\b/.test(service.slice(gate.index, refusalIndex)),
+    false,
+    'the duplicate-prevention guard must return, not throw'
+  );
+  assert.equal(
+    /process\.exit\(/.test(service),
+    false,
+    'an unverified index must disable attendance writes, not stop the backend'
+  );
 });
 
 test('attendance writes still go through one atomic upsert on that key', () => {

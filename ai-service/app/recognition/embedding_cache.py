@@ -322,24 +322,59 @@ class EmbeddingCache:
         and runs its own. Returning early from a forced call used to install
         the pre-change identity set and report success.
 
-        ``blocking=True`` (the HTTP cache-refresh route, and the startup
-        prefetch) fetches inline, because those callers need to report the
-        outcome.
+        ``blocking=True`` (the HTTP cache-refresh route and the startup
+        prefetch, which reach it through ``refresh_blocking``) fetches inline,
+        because those callers need to report the outcome.
 
         A failed refresh leaves the previous generation intact and records the
         error — losing contact with the backend must not silently erase every
         identity, and must not crash the camera worker. ``is_stale()`` is what
         stops a long-failing refresh from being trusted indefinitely.
+
+        The return value is ``loaded`` on EVERY path, blocking or not: "is
+        there an identity set to match against", never "did this call install
+        one". A failed refresh therefore still returns True while the previous
+        generation survives — that generation surviving is the entire point.
+        Callers that need to know whether a fetch actually ran AND installed a
+        new generation must call ``try_refresh`` instead; this function
+        deliberately does not mean two different things depending on its
+        arguments.
+        """
+        self.try_refresh(
+            expected_dim=expected_dim,
+            expected_model=expected_model,
+            force=force,
+            blocking=blocking,
+        )
+        return self.loaded
+
+    def try_refresh(self, expected_dim: int | None = None,
+                    expected_model: str | None = None,
+                    force: bool = False,
+                    blocking: bool = True) -> bool:
+        """Run one refresh cycle. True ONLY when this call installed a new
+        generation.
+
+        The shared body of ``ensure_fresh`` — identical TTL, deduplication,
+        force and blocking rules, documented there — but it reports what
+        HAPPENED rather than what is cached, which is what the HTTP
+        cache-refresh route and the startup prefetch need. It returns False
+        when the TTL had not lapsed so no fetch ran, False when an unforced
+        call deduplicated against a refresh already in flight, False when the
+        fetch failed or its result was superseded by a newer invalidation, and
+        False for ``blocking=False`` because nothing can have been installed by
+        the time it returns. Never raises.
         """
         settings = get_settings()
         with self._lock:
             age = self._now() - self._fetched_at if self._fetched_at else None
             stale = age is None or age >= float(settings.embedding_cache_ttl)
             if not force and not stale:
-                return self._loaded
+                # Inside the TTL: no fetch ran, so nothing was installed.
+                return False
             if self._refresh_in_flight and not force:
                 # Someone else is already fetching; never queue a second one.
-                return self._loaded
+                return False
             if force:
                 # Supersede anything in flight: its result predates this call.
                 self._generation += 1
@@ -360,7 +395,8 @@ class EmbeddingCache:
             with self._lock:
                 self._refresh_thread = thread
             thread.start()
-            return self.loaded
+            # Dispatched, not installed: the fetch is still in flight.
+            return False
 
         return self._refresh_now(
             expected_dim=expected_dim,
@@ -378,9 +414,15 @@ class EmbeddingCache:
         alone, which showed ``loaded: true`` and the old candidate count even
         when no fetch had run at all, so the backend logged a refresh that had
         not happened.
+
+        It calls ``try_refresh`` rather than ``ensure_fresh`` because those are
+        now two different questions: ``ensure_fresh`` answers "is there an
+        identity set to match against" (still True after a failed refresh, by
+        design), and only ``try_refresh`` answers "did this call install one".
+        Reporting the former here would call a failed refresh a success.
         """
         self.invalidate()
-        installed = self.ensure_fresh(
+        installed = self.try_refresh(
             expected_dim=expected_dim,
             expected_model=expected_model,
             force=True,
